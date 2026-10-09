@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ACR1281 Card Reader System</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:Inter,system-ui,-apple-system,sans-serif;background:#020617;color:#e2e8f0;padding:20px}
+        .top{display:flex;justify-content:space-between;align-items:center;background:#0f172a;padding:15px 20px;border-radius:12px;border:1px solid #1e293b}
+        .status-dot{width:12px;height:12px;border-radius:50%;display:inline-block;margin-right:8px}
+        .connected{background:#22c55e;box-shadow:0 0 10px #22c55e}
+        .disconnected{background:#ef4444}
+        .main{display:grid;grid-template-columns:1fr 420px;gap:20px;margin-top:20px}
+        .reader-area{background:#0f172a;border:2px dashed #334155;border-radius:16px;padding:40px;text-align:center;min-height:480px;display:flex;flex-direction:column;justify-content:center;align-items:center}
+        .pulse{animation:pulse 2s infinite}
+        @keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.05);opacity:.8}}
+        .card-display{background:linear-gradient(135deg,#1e40af,#7c3aed);padding:25px;border-radius:16px;width:100%;max-width:380px;color:white;box-shadow:0 20px 40px rgba(0,0,0,.4);text-align:left}
+        .card-display h2{font-size:28px;letter-spacing:2px;margin:10px 0}
+        .card-display .label{font-size:11px;opacity:.7;text-transform:uppercase;letter-spacing:1px}
+        .card-display .value{font-family:monospace;font-size:14px;margin-bottom:12px;word-break:break-all}
+        
+        /* Terminal Log Styling */
+        .log-panel{display:flex;flex-direction:column}
+        .log-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+        #log{background:#090d16;border:1px solid #1e293b;border-radius:12px;padding:12px;height:430px;overflow-y:auto;font-family:'Consolas','Courier New',monospace;font-size:12px;display:flex;flex-direction:column-reverse;gap:6px}
+        .log-entry{padding:8px 10px;border-radius:6px;background:#0f172a;border-left:3px solid #64748b;line-height:1.4;animation:slideIn .2s ease-out;word-break:break-all}
+        .log-entry.success{border-left-color:#22c55e;background:rgba(34,197,94,0.08)}
+        .log-entry.info{border-left-color:#38bdf8;background:rgba(56,189,248,0.08)}
+        .log-entry.warning{border-left-color:#f59e0b;background:rgba(245,158,11,0.08)}
+        .log-entry.error{border-left-color:#ef4444;background:rgba(239,68,68,0.08)}
+        
+        .log-time{color:#64748b;margin-right:6px;font-size:11px}
+        .log-badge{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;margin-right:6px;text-transform:uppercase}
+        .badge-success{background:rgba(34,197,94,0.2);color:#22c55e}
+        .badge-info{background:rgba(56,189,248,0.2);color:#38bdf8}
+        .badge-warning{background:rgba(245,158,11,0.2);color:#f59e0b}
+        .badge-error{background:rgba(239,68,68,0.2);color:#ef4444}
+
+        button{background:#3b82f6;color:white;border:none;padding:10px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin:5px;transition:0.2s}
+        button:hover{background:#2563eb}
+        .acr-badge{background:#22c55e;color:black;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:bold}
+        .log-actions{display:flex;gap:10px;margin-top:10px}
+        .log-actions button{flex:1;margin:0;background:#1e293b}
+        .log-actions button:hover{background:#334155}
+    </style>
+</head>
+<body>
+    <div class="top">
+        <div>
+            <span id="dot" class="status-dot disconnected"></span>
+            <b id="device">Detecting ACR1281...</b> 
+            <span id="badge"></span>
+        </div>
+        <div><small id="readerList"></small></div>
+    </div>
+
+    <div class="main">
+        <div class="reader-area" id="readerArea">
+            <div id="waiting">
+                <div style="font-size:60px" class="pulse">📡</div>
+                <h2 style="margin:20px 0">Tap Card on ACR1281</h2>
+                <p style="opacity:.6">Contactless (PICC) Antenna</p>
+                <div style="margin-top:20px">
+                    <button onclick="socket.emit('read_now')">🔍 Read Now</button>
+                    <button onclick="simulate()">🎲 Simulate</button>
+                </div>
+            </div>
+            <div id="cardView" style="display:none">
+                <div class="card-display">
+                    <div class="label">ACR1281 - <span id="iface"></span></div>
+                    <div class="label" style="margin-top:10px">Card UID (Hex)</div>
+                    <h2 id="uid"></h2>
+                    <div class="label">Decimal</div>
+                    <div class="value" id="uidDec"></div>
+                    <div class="label">Type</div>
+                    <div class="value" id="ctype"></div>
+                    <div class="label">ATR</div>
+                    <div class="value" style="font-size:10px" id="atr"></div>
+                    <div class="label">Timestamp</div>
+                    <div class="value" id="time"></div>
+                    <div id="blockDataBox" style="display:none;margin-top:10px;background:rgba(0,0,0,.3);padding:10px;border-radius:8px">
+                        <div class="label">Block Data</div>
+                        <div class="value" id="blockData"></div>
+                    </div>
+                </div>
+                <button onclick="resetView()" style="margin-top:20px;background:#1e293b">← Tap Another Card</button>
+            </div>
+        </div>
+        
+        <div class="log-panel">
+            <div class="log-header">
+                <h3 style="font-size:16px;display:flex;align-items:center;gap:6px">📜 Live Reader Logs</h3>
+                <span id="logCount" style="font-size:11px;color:#94a3b8;background:#1e293b;padding:2px 8px;border-radius:10px">0 events</span>
+            </div>
+            <div id="log"></div>
+            <div class="log-actions">
+                <button onclick="clearLog()">Clear Log</button>
+                <button onclick="copyLogs()">📋 Copy Logs</button>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const socket = io();
+    const dot = document.getElementById('dot');
+    const device = document.getElementById('device');
+    const badge = document.getElementById('badge');
+    const logBox = document.getElementById('log');
+    
+    // Status update
+    socket.on('reader_status', d => {
+        dot.className = 'status-dot ' + (d.connected ? 'connected' : 'disconnected');
+        device.innerText = d.device;
+        const readerListEl = document.getElementById('readerList');
+        if (d.is_acr1281) {
+            badge.innerHTML = '<span class="acr-badge">ACR1281 DETECTED</span>';
+            readerListEl.innerHTML = '<span style="color:#22c55e;font-size:12px;font-weight:600">● Dual Mode (PICC/ICC) Ready</span>';
+        } else {
+            badge.innerHTML = '<span style="background:#ef4444;color:white;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:bold">DISCONNECTED</span>';
+            readerListEl.innerHTML = '<span style="color:#ef4444;font-size:12px">⚠️ Please connect ACR1281 Reader</span>';
+        }
+    });
+
+    // Add log entry to UI
+    function renderLogEntry(data, prepend = true) {
+        const level = data.level || 'info';
+        const badgeClass = 'badge-' + level;
+        const div = document.createElement('div');
+        div.className = 'log-entry ' + level;
+        div.innerHTML = `<span class="log-time">${data.timestamp}</span><span class="log-badge ${badgeClass}">${level}</span><span>${data.message}</span>`;
+        if (prepend) {
+            logBox.prepend(div);
+        } else {
+            logBox.appendChild(div);
+        }
+        updateLogCount();
+    }
+
+    // Stream single new log event
+    socket.on('log_event', entry => {
+        renderLogEntry(entry, true);
+    });
+
+    // Receive full history on load / refresh
+    socket.on('log_history', history => {
+        logBox.innerHTML = '';
+        if (Array.isArray(history)) {
+            history.forEach(entry => renderLogEntry(entry, true));
+        }
+    });
+
+    // Card Detected UI
+    socket.on('card_detected', data => {
+        document.getElementById('waiting').style.display = 'none';
+        document.getElementById('cardView').style.display = 'block';
+        document.getElementById('iface').innerText = data.interface;
+        document.getElementById('uid').innerText = data.uid_formatted || data.uid;
+        document.getElementById('uidDec').innerText = data.uid_decimal || data.uid;
+        document.getElementById('ctype').innerText = data.type;
+        document.getElementById('atr').innerText = data.atr;
+        document.getElementById('time').innerText = data.timestamp;
+        if(data.block_data){
+            document.getElementById('blockDataBox').style.display = 'block';
+            document.getElementById('blockData').innerText = data.block_data;
+        }
+    });
+    
+    socket.on('no_card', d => {
+        alert(d.message);
+    });
+    
+    function resetView(){
+        document.getElementById('waiting').style.display = 'block';
+        document.getElementById('cardView').style.display = 'none';
+    }
+
+    function clearLog(){
+        logBox.innerHTML = '';
+        updateLogCount();
+    }
+
+    function copyLogs(){
+        const text = logBox.innerText;
+        if (!text) return alert("Log is empty!");
+        navigator.clipboard.writeText(text).then(()=>{
+            alert("Logs copied to clipboard!");
+        });
+    }
+
+    function updateLogCount(){
+        document.getElementById('logCount').innerText = `${logBox.children.length} events`;
+    }
+
+    function simulate(){
+        const fake = {
+            interface: 'Contactless (PICC)',
+            uid: 'A1B2C3D4',
+            uid_formatted: 'A1:B2:C3:D4',
+            uid_decimal: '2712847316',
+            type: 'MIFARE Classic 1K (Simulated)',
+            atr: '3B 8F 80 01 80 4F 0C A0 00 00 03 06',
+            timestamp: new Date().toLocaleTimeString()
+        };
+        socket.emit('card_detected', fake);
+        renderLogEntry({
+            timestamp: fake.timestamp,
+            level: 'success',
+            message: `SIMULATED CARD -> UID: ${fake.uid_formatted} | ${fake.type}`
+        }, true);
+    }
+
+    socket.on('connect', () => { 
+        renderLogEntry({
+            timestamp: new Date().toLocaleTimeString(),
+            level: 'info',
+            message: 'Web socket connected to ACR1281 Service'
+        }, true);
+    });
+</script>
+</body>
+</html>

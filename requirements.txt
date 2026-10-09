@@ -1,0 +1,33 @@
+# ACR1281 Card Reader Web App - Full Requirements
+# Core Web
+flask==3.0.3
+flask-socketio==5.3.6
+flask-cors==4.0.1
+flask-sqlalchemy==3.1.1
+
+# Async server
+eventlet==0.36.1
+python-socketio==5.12.1
+python-engineio==4.12.0
+bidict==0.23.1
+
+# Card Reader - ACR1281U
+pyscard>=2.2.0
+pyserial==3.5
+libusb1>=3.2.0
+
+# Database & ORM
+sqlalchemy==2.0.36
+greenlet==3.1.1
+
+# Utils
+python-dotenv==1.0.1
+pytz==2024.2
+colorama==0.4.6
+
+# Optional - for future enhancements
+# For Aadhaar/ID card parsing
+# pycryptodome==3.21.0
+# For Excel export
+# openpyxl==3.1.5
+# pandas==2.2.3
