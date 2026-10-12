@@ -41,6 +41,15 @@ def handle_read_now():
     else:
         socketio.emit('no_card', {"message": "No card detected - tap card on reader"})
 
+@socketio.on('dump_card')
+def handle_dump_card():
+    dump = reader_service.dump_card_memory()
+    socketio.emit('dump_result', dump)
+
+@app.route('/api/dump')
+def api_dump():
+    return jsonify(reader_service.dump_card_memory())
+
 if __name__ == '__main__':
     # Background thread for continuous reading
     t = threading.Thread(target=reader_service.loop, daemon=True)

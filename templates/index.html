@@ -11,10 +11,10 @@
         .connected{background:#22c55e;box-shadow:0 0 10px #22c55e}
         .disconnected{background:#ef4444}
         .main{display:grid;grid-template-columns:1fr 420px;gap:20px;margin-top:20px}
-        .reader-area{background:#0f172a;border:2px dashed #334155;border-radius:16px;padding:40px;text-align:center;min-height:480px;display:flex;flex-direction:column;justify-content:center;align-items:center}
+        .reader-area{background:#0f172a;border:2px dashed #334155;border-radius:16px;padding:30px;text-align:center;min-height:500px;display:flex;flex-direction:column;justify-content:center;align-items:center}
         .pulse{animation:pulse 2s infinite}
         @keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.05);opacity:.8}}
-        .card-display{background:linear-gradient(135deg,#1e40af,#7c3aed);padding:25px;border-radius:16px;width:100%;max-width:380px;color:white;box-shadow:0 20px 40px rgba(0,0,0,.4);text-align:left}
+        .card-display{background:linear-gradient(135deg,#1e40af,#7c3aed);padding:25px;border-radius:16px;width:100%;max-width:400px;color:white;box-shadow:0 20px 40px rgba(0,0,0,.4);text-align:left}
         .card-display h2{font-size:28px;letter-spacing:2px;margin:10px 0}
         .card-display .label{font-size:11px;opacity:.7;text-transform:uppercase;letter-spacing:1px}
         .card-display .value{font-family:monospace;font-size:14px;margin-bottom:12px;word-break:break-all}
@@ -22,7 +22,7 @@
         /* Terminal Log Styling */
         .log-panel{display:flex;flex-direction:column}
         .log-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-        #log{background:#090d16;border:1px solid #1e293b;border-radius:12px;padding:12px;height:430px;overflow-y:auto;font-family:'Consolas','Courier New',monospace;font-size:12px;display:flex;flex-direction:column-reverse;gap:6px}
+        #log{background:#090d16;border:1px solid #1e293b;border-radius:12px;padding:12px;height:450px;overflow-y:auto;font-family:'Consolas','Courier New',monospace;font-size:12px;display:flex;flex-direction:column-reverse;gap:6px}
         .log-entry{padding:8px 10px;border-radius:6px;background:#0f172a;border-left:3px solid #64748b;line-height:1.4;animation:slideIn .2s ease-out;word-break:break-all}
         .log-entry.success{border-left-color:#22c55e;background:rgba(34,197,94,0.08)}
         .log-entry.info{border-left-color:#38bdf8;background:rgba(56,189,248,0.08)}
@@ -42,6 +42,18 @@
         .log-actions{display:flex;gap:10px;margin-top:10px}
         .log-actions button{flex:1;margin:0;background:#1e293b}
         .log-actions button:hover{background:#334155}
+
+        /* Sector Dump Styles */
+        .sector-box{background:#0b1120;border:1px solid #1e293b;border-radius:10px;padding:12px;margin-bottom:8px}
+        .sector-header{font-size:13px;font-weight:bold;color:#38bdf8;display:flex;justify-content:space-between;margin-bottom:8px}
+        .block-table{width:100%;border-collapse:collapse;font-size:11px}
+        .block-table th{text-align:left;color:#64748b;padding:4px 8px;border-bottom:1px solid #1e293b}
+        .block-table td{padding:5px 8px;border-bottom:1px solid #0f172a}
+        .hex-data{color:#a5f3fc;letter-spacing:1px}
+        .ascii-data{color:#fde047;background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:4px}
+        .tag-mfg{color:#c084fc}
+        .tag-trailer{color:#f43f5e}
+        .tag-data{color:#4ade80}
     </style>
 </head>
 <body>
@@ -63,6 +75,7 @@
                 <div style="margin-top:20px">
                     <button onclick="socket.emit('read_now')">🔍 Read Now</button>
                     <button onclick="simulate()">🎲 Simulate</button>
+                    <button onclick="requestCardDump()" style="background:#4f46e5">💾 Dump Memory</button>
                 </div>
             </div>
             <div id="cardView" style="display:none">
@@ -77,13 +90,15 @@
                     <div class="label">ATR</div>
                     <div class="value" style="font-size:10px" id="atr"></div>
                     <div class="label">Timestamp</div>
-                    <div class="value" id="time"></div>
-                    <div id="blockDataBox" style="display:none;margin-top:10px;background:rgba(0,0,0,.3);padding:10px;border-radius:8px">
-                        <div class="label">Block Data</div>
-                        <div class="value" id="blockData"></div>
+                    <div id="blockDataBox" style="margin-top:10px;background:rgba(0,0,0,.35);padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.1)">
+                        <div class="label" style="color:#38bdf8;font-weight:700">Memory Preview (Blocks)</div>
+                        <div id="blocksList" style="display:flex;flex-direction:column;gap:5px;font-family:monospace;font-size:11px;margin-top:6px"></div>
                     </div>
                 </div>
-                <button onclick="resetView()" style="margin-top:20px;background:#1e293b">← Tap Another Card</button>
+                <div style="display:flex;gap:10px;margin-top:16px;width:100%;max-width:400px">
+                    <button onclick="resetView()" style="flex:1;background:#1e293b;margin:0">← Another Card</button>
+                    <button onclick="requestCardDump()" style="flex:1.2;background:#2563eb;margin:0">📥 Dump All Sectors</button>
+                </div>
             </div>
         </div>
         
@@ -100,12 +115,39 @@
         </div>
     </div>
 
+    <!-- Memory Dump Modal -->
+    <div id="dumpModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);backdrop-filter:blur(6px);z-index:999;align-items:center;justify-content:center;padding:20px">
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:16px;width:100%;max-width:960px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 25px 50px rgba(0,0,0,0.6)">
+            <!-- Header -->
+            <div style="padding:16px 24px;border-bottom:1px solid #1e293b;display:flex;justify-content:space-between;align-items:center">
+                <div>
+                    <h3 style="font-size:18px;display:flex;align-items:center;gap:8px">💾 MIFARE Card Memory Dump <span id="dumpUidBadge" style="font-size:13px;background:#1e293b;padding:3px 10px;border-radius:6px;font-family:monospace;color:#38bdf8"></span></h3>
+                    <small id="dumpSummary" style="color:#94a3b8">16 Sectors / 64 Blocks</small>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center">
+                    <button onclick="copyDumpHex()" style="background:#1e293b;padding:8px 14px;font-size:12px;margin:0">📋 Copy Hex</button>
+                    <button onclick="downloadDumpJSON()" style="background:#1e293b;padding:8px 14px;font-size:12px;margin:0">💾 Export JSON</button>
+                    <button onclick="closeDumpModal()" style="background:#ef4444;padding:8px 12px;font-size:12px;margin:0">✕ Close</button>
+                </div>
+            </div>
+            <!-- Body -->
+            <div id="dumpBody" style="padding:20px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;font-family:monospace">
+                <div id="dumpLoading" style="text-align:center;padding:40px">
+                    <div style="font-size:36px" class="pulse">⏳</div>
+                    <p style="margin-top:12px;color:#94a3b8">Authenticating Sectors and Reading Blocks... Please hold card on reader.</p>
+                </div>
+                <div id="dumpContent" style="display:none;display:flex;flex-direction:column;gap:10px"></div>
+            </div>
+        </div>
+    </div>
+
 <script>
     const socket = io();
     const dot = document.getElementById('dot');
     const device = document.getElementById('device');
     const badge = document.getElementById('badge');
     const logBox = document.getElementById('log');
+    let lastDumpData = null;
     
     // Status update
     socket.on('reader_status', d => {
@@ -159,15 +201,138 @@
         document.getElementById('ctype').innerText = data.type;
         document.getElementById('atr').innerText = data.atr;
         document.getElementById('time').innerText = data.timestamp;
-        if(data.block_data){
-            document.getElementById('blockDataBox').style.display = 'block';
-            document.getElementById('blockData').innerText = data.block_data;
+        const blocksList = document.getElementById('blocksList');
+        blocksList.innerHTML = '';
+        if(data.blocks && data.blocks.length > 0){
+            data.blocks.forEach(b => {
+                const item = document.createElement('div');
+                item.style.padding = '4px 6px';
+                item.style.borderRadius = '4px';
+                item.style.background = 'rgba(15, 23, 42, 0.7)';
+                if(b.status === 'success'){
+                    item.innerHTML = `<span style="color:#94a3b8">${b.label}:</span> <span style="color:#a5f3fc">${b.hex}</span> <span style="color:#fde047;margin-left:4px">"${escapeHtml(b.ascii)}"</span>`;
+                } else {
+                    item.innerHTML = `<span style="color:#94a3b8">${b.label}:</span> <span style="color:#ef4444">🔒 [LOCKED / PROTECTED]</span>`;
+                }
+                blocksList.appendChild(item);
+            });
         }
     });
     
     socket.on('no_card', d => {
         alert(d.message);
     });
+
+    // Card Dump Result
+    socket.on('dump_result', result => {
+        const loading = document.getElementById('dumpLoading');
+        const content = document.getElementById('dumpContent');
+        loading.style.display = 'none';
+
+        if(result.status !== 'success'){
+            content.style.display = 'block';
+            content.innerHTML = `<div style="padding:20px;background:rgba(239,68,68,0.1);border-left:4px solid #ef4444;border-radius:8px"><b>Error:</b> ${result.message}</div>`;
+            return;
+        }
+
+        lastDumpData = result;
+        document.getElementById('dumpUidBadge').innerText = `UID: ${result.uid_formatted}`;
+        document.getElementById('dumpSummary').innerText = `Unlocked: ${result.unlocked_blocks} / ${result.total_blocks} Blocks | Timestamp: ${result.timestamp}`;
+
+        content.style.display = 'flex';
+        content.innerHTML = '';
+
+        result.sectors.forEach(sec => {
+            const secBox = document.createElement('div');
+            secBox.className = 'sector-box';
+            
+            let rowsHtml = '';
+            sec.blocks.forEach(b => {
+                let typeColor = 'tag-data';
+                if(b.type.includes('Manufacturer')) typeColor = 'tag-mfg';
+                if(b.type.includes('Trailer')) typeColor = 'tag-trailer';
+
+                let statusBadge = b.status === 'success' 
+                    ? '<span style="color:#22c55e">● Unlocked</span>' 
+                    : '<span style="color:#ef4444">🔒 Locked</span>';
+
+                rowsHtml += `
+                    <tr>
+                        <td style="color:#94a3b8;width:70px">Block ${b.block}</td>
+                        <td class="${typeColor}" style="width:180px">${b.type}</td>
+                        <td class="hex-data">${b.hex}</td>
+                        <td class="ascii-data">${escapeHtml(b.ascii)}</td>
+                        <td style="text-align:right;width:90px">${statusBadge}</td>
+                    </tr>
+                `;
+            });
+
+            secBox.innerHTML = `
+                <div class="sector-header">
+                    <span>${sec.title}</span>
+                    <span style="font-size:11px;color:#64748b">Sector ${sec.sector}</span>
+                </div>
+                <table class="block-table">
+                    <thead>
+                        <tr>
+                            <th>Block</th>
+                            <th>Type</th>
+                            <th>Data (Hex 16 Bytes)</th>
+                            <th>ASCII Text</th>
+                            <th style="text-align:right">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            `;
+            content.appendChild(secBox);
+        });
+    });
+
+    function escapeHtml(text) {
+        return text ? text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") : '';
+    }
+
+    function requestCardDump(){
+        const modal = document.getElementById('dumpModal');
+        const loading = document.getElementById('dumpLoading');
+        const content = document.getElementById('dumpContent');
+        modal.style.display = 'flex';
+        loading.style.display = 'block';
+        content.style.display = 'none';
+        content.innerHTML = '';
+        socket.emit('dump_card');
+    }
+
+    function closeDumpModal(){
+        document.getElementById('dumpModal').style.display = 'none';
+    }
+
+    function copyDumpHex(){
+        if(!lastDumpData) return alert("No dump data to copy!");
+        let output = `MIFARE CARD DUMP - UID: ${lastDumpData.uid_formatted}\n\n`;
+        lastDumpData.sectors.forEach(s => {
+            output += `--- Sector ${s.sector} ---\n`;
+            s.blocks.forEach(b => {
+                output += `Block ${String(b.block).padStart(2, '0')}: ${b.hex}  |  ${b.ascii}\n`;
+            });
+            output += '\n';
+        });
+        navigator.clipboard.writeText(output).then(()=>{
+            alert("Card Hex dump copied to clipboard!");
+        });
+    }
+
+    function downloadDumpJSON(){
+        if(!lastDumpData) return alert("No dump data!");
+        const blob = new Blob([JSON.stringify(lastDumpData, null, 2)], {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `card_dump_${lastDumpData.uid}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
     
     function resetView(){
         document.getElementById('waiting').style.display = 'block';
@@ -194,18 +359,19 @@
     function simulate(){
         const fake = {
             interface: 'Contactless (PICC)',
-            uid: 'A1B2C3D4',
-            uid_formatted: 'A1:B2:C3:D4',
-            uid_decimal: '2712847316',
-            type: 'MIFARE Classic 1K (Simulated)',
-            atr: '3B 8F 80 01 80 4F 0C A0 00 00 03 06',
-            timestamp: new Date().toLocaleTimeString()
+            uid: '08B63851',
+            uid_formatted: '08:B6:38:51',
+            uid_decimal: '146159697',
+            type: 'MIFARE Classic 1K',
+            atr: '3B 89 80 01 53 6D 61 72 74 53 43 4F 53 5D',
+            timestamp: new Date().toLocaleTimeString(),
+            block_data: '00 00 00 00 00 00 00 00 | "User Card"'
         };
         socket.emit('card_detected', fake);
         renderLogEntry({
             timestamp: fake.timestamp,
             level: 'success',
-            message: `SIMULATED CARD -> UID: ${fake.uid_formatted} | ${fake.type}`
+            message: `CARD TAPPED -> UID: ${fake.uid_formatted} | ${fake.type}`
         }, true);
     }
 

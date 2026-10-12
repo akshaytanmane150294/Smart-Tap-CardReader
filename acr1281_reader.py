@@ -5,10 +5,18 @@ ACR1281U-C1 Dual Reader - Complete Handler
 Works with pyscard (PC/SC)
 """
 
+import sys
 import time
 from smartcard.System import readers
 from smartcard.util import toHexString, toBytes
 from smartcard.Exceptions import NoCardException, CardConnectionException
+
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 class ACR1281Service:
     def __init__(self, socketio=None):
@@ -119,7 +127,15 @@ class ACR1281Service:
                 
                 # Detect card type from ATR / UID length
                 card_type = self.detect_card_type(uid_hex, atr)
+                is_ultralight = (len(uid_hex) > 8)
                 
+                # Read key memory blocks (Sector 0, 1, 2) or pages (Ultralight)
+                blocks = []
+                try:
+                    blocks = self.read_card_preview_blocks(conn, is_ultralight=is_ultralight)
+                except:
+                    pass
+
                 return {
                     "interface": "Contactless (PICC)",
                     "reader": str(reader),
@@ -130,7 +146,8 @@ class ACR1281Service:
                     "type": card_type,
                     "protocol": "T=1" if "3B" in atr else "T=0",
                     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "raw_data": data
+                    "raw_data": data,
+                    "blocks": blocks
                 }
             else:
                 # No card or error
@@ -176,34 +193,258 @@ class ACR1281Service:
             return None
 
     def detect_card_type(self, uid, atr):
-        if len(uid) == 8: return "MIFARE Classic 1K (4-byte UID)"
-        if len(uid) == 14: return "MIFARE Ultralight / NTAG (7-byte UID)"
-        if "MIFARE" in atr: return "MIFARE Card"
-        if "3B8F8001" in atr.replace(" ",""): return "MIFARE Classic / NTAG"
-        return f"ISO14443 Type A - {len(uid)//2} byte UID"
+        atr_clean = atr.replace(" ", "").upper()
+        if uid.startswith("08") and len(uid) == 8:
+            return "Random UID Card (ISO14443-A RID / High-Security)"
+        if "00010000" in atr_clean:
+            return "MIFARE Classic 1K"
+        if "00020000" in atr_clean:
+            return "MIFARE Classic 4K"
+        if "00030000" in atr_clean or len(uid) == 14:
+            return "MIFARE Ultralight / NTAG (7-byte UID)"
+        if len(uid) == 8:
+            return "MIFARE Classic 1K (4-byte UID)"
+        return f"ISO14443 Type A ({len(uid)//2}-byte UID)"
 
-    def read_mifare_block(self, block_number=4, key_type=0x60, key=[0xFF]*6):
-        """Optional: Read data from MIFARE block (after UID)"""
+    def read_mifare_block_with_keys(self, conn, block_number, keys_to_try=None):
+        """Try authenticating and reading a single MIFARE Classic 1K block using 6-byte keys"""
+        if keys_to_try is None:
+            keys_to_try = [
+                [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],  # Factory Default (80%+ cards)
+                [0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5],  # MAD Key
+                [0xD3, 0xF7, 0xD3, 0xF7, 0xD3, 0xF7],  # NFC Forum
+                [0x00, 0x00, 0x00, 0x00, 0x00, 0x00],  # Blank / Zero Key
+                [0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5],  # Philips/NXP Default
+                [0x4D, 0x3A, 0x99, 0xC3, 0x51, 0xDD],  # Transport Key
+                [0x1A, 0x98, 0x2C, 0x7E, 0x45, 0x9A],
+                [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]
+            ]
+
+        for key in keys_to_try:
+            for key_type in [0x60, 0x61]:  # Key A (0x60), Key B (0x61)
+                for key_struct in [0x00, 0x20]:  # Volatile (00), Non-volatile (20)
+                    try:
+                        # 1. Load 6-byte key into reader memory slot 0x00
+                        LOAD_KEY = [0xFF, 0x82, key_struct, 0x00, 0x06] + key
+                        _, sw1, sw2 = conn.transmit(LOAD_KEY)
+                        if sw1 != 0x90:
+                            continue
+
+                        # 2. Authenticate block
+                        AUTH = [0xFF, 0x86, 0x00, 0x00, 0x05, 0x01, 0x00, block_number, key_type, 0x00]
+                        _, sw1, sw2 = conn.transmit(AUTH)
+                        if sw1 == 0x90 and sw2 == 0x00:
+                            # 3. Read 16 bytes
+                            READ = [0xFF, 0xB0, 0x00, block_number, 0x10]
+                            data, sw1, sw2 = conn.transmit(READ)
+                            if sw1 == 0x90 and sw2 == 0x00 and len(data) == 16:
+                                hex_str = ' '.join(f'{b:02X}' for b in data)
+                                ascii_str = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in data)
+                                readable = ''.join(chr(b) if 32 <= b <= 126 else '' for b in data).strip()
+                                return {
+                                    "block": block_number,
+                                    "status": "success",
+                                    "hex": hex_str,
+                                    "ascii": ascii_str,
+                                    "readable_text": readable,
+                                    "raw": data,
+                                    "key_type": "Key A" if key_type == 0x60 else "Key B"
+                                }
+                    except:
+                        pass
+
+        return {
+            "block": block_number,
+            "status": "locked",
+            "hex": "-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --",
+            "ascii": "[LOCKED / CUSTOM KEY]",
+            "readable_text": "",
+            "raw": []
+        }
+
+    def try_read_block(self, conn, block_no, is_ultralight=False):
+        """Read block/page based on card architecture (Ultralight vs Classic)"""
+        if is_ultralight:
+            # MIFARE Ultralight / NTAG - No Auth/Key needed, direct binary read
+            # Read 4 bytes (1 page) using FF B0 00 <page> 04
+            try:
+                READ = [0xFF, 0xB0, 0x00, block_no, 0x04]
+                data, sw1, sw2 = conn.transmit(READ)
+                if sw1 == 0x90 and sw2 == 0x00 and len(data) >= 4:
+                    hex_str = ' '.join(f'{b:02X}' for b in data)
+                    ascii_str = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in data)
+                    readable = ''.join(chr(b) if 32 <= b <= 126 else '' for b in data).strip()
+                    return {
+                        "block": block_no,
+                        "status": "success",
+                        "hex": hex_str,
+                        "ascii": ascii_str,
+                        "readable_text": readable,
+                        "raw": data,
+                        "key_type": "Direct Read (No Auth)"
+                    }
+                else:
+                    return {
+                        "block": block_no,
+                        "status": "locked",
+                        "reason": "Password Protected / End of Memory",
+                        "hex": "-- -- -- --",
+                        "ascii": "[LOCKED / PWD]",
+                        "readable_text": "",
+                        "raw": []
+                    }
+            except Exception as e:
+                return {
+                    "block": block_no,
+                    "status": "locked",
+                    "reason": str(e),
+                    "hex": "-- -- -- --",
+                    "ascii": f"[ERR: {e}]",
+                    "readable_text": "",
+                    "raw": []
+                }
+        else:
+            # MIFARE Classic 1K - Key Auth required
+            return self.read_mifare_block_with_keys(conn, block_no)
+
+    def read_card_preview_blocks(self, conn, is_ultralight=False):
+        """Read key blocks or pages for instant preview"""
+        preview_blocks = []
+        if is_ultralight:
+            # MIFARE Ultralight / NTAG pages (4 bytes per page)
+            target_pages = [
+                (0, "Page 0 (UID Part 1)"),
+                (1, "Page 1 (UID Part 2)"),
+                (2, "Page 2 (Lock Bytes)"),
+                (3, "Page 3 (OTP / Config)"),
+                (4, "Page 4 (User Data / NDEF)"),
+                (5, "Page 5 (User Data)"),
+                (6, "Page 6 (User Data)"),
+                (7, "Page 7 (User Data)")
+            ]
+            for p, lbl in target_pages:
+                res = self.try_read_block(conn, p, is_ultralight=True)
+                res["label"] = lbl
+                preview_blocks.append(res)
+        else:
+            # MIFARE Classic 1K blocks (16 bytes per block)
+            target_blocks = [
+                (0, "Block 0 (UID / Mfg)"),
+                (1, "Block 1 (Sector 0 Data)"),
+                (2, "Block 2 (Sector 0 Data)"),
+                (4, "Block 4 (Sector 1 Data)"),
+                (5, "Block 5 (Sector 1 Data)"),
+                (8, "Block 8 (Sector 2 Data)")
+            ]
+            for b, lbl in target_blocks:
+                res = self.try_read_block(conn, b, is_ultralight=False)
+                res["label"] = lbl
+                preview_blocks.append(res)
+        return preview_blocks
+
+    def dump_card_memory(self):
+        """Read all memory blocks/pages from the card on ACR1281"""
         try:
-            reader = self.get_acr1281_reader()
+            reader = self.get_acr1281_reader(prefer_contactless=True)
+            if not reader:
+                return {"status": "error", "message": "ACR1281 contactless reader not detected."}
+
             conn = reader.createConnection()
             conn.connect()
-            # Load key
-            LOAD_KEY = [0xFF, 0x82, 0x00, 0x00, 0x06] + key
-            data, sw1, sw2 = conn.transmit(LOAD_KEY)
-            # Authenticate
-            AUTH = [0xFF, 0x86, 0x00, 0x00, 0x05, 0x01, 0x00, block_number, key_type, 0x00]
-            data, sw1, sw2 = conn.transmit(AUTH)
+
+            # Verify card present
+            GET_UID = [0xFF, 0xCA, 0x00, 0x00, 0x00]
+            data, sw1, sw2 = conn.transmit(GET_UID)
             if sw1 != 0x90:
-                return None
-            # Read block
-            READ = [0xFF, 0xB0, 0x00, block_number, 0x10]
-            data, sw1, sw2 = conn.transmit(READ)
-            if sw1 == 0x90:
-                return ''.join(chr(b) if 32 <= b <= 126 else '.' for b in data)
-        except Exception:
-            pass
-        return None
+                return {"status": "error", "message": "No card detected on reader. Place card on antenna."}
+
+            uid_hex = ''.join(f'{b:02X}' for b in data)
+            uid_fmt = ':'.join(f'{b:02X}' for b in data)
+            is_ultralight = (len(uid_hex) > 8)
+            card_type_desc = "MIFARE Ultralight / NTAG" if is_ultralight else "MIFARE Classic 1K"
+            self.emit_log(f"Initiating memory dump for {card_type_desc} (UID: {uid_fmt})...", "info")
+
+            sectors = []
+            unlocked_count = 0
+
+            if is_ultralight:
+                # MIFARE Ultralight / NTAG has pages (4 bytes each).
+                # Dump 16 pages (Pages 0 to 15, 64 bytes total), grouped into 4 sections
+                total_blocks = 16
+                for s in range(4):
+                    sec_info = {
+                        "sector": s,
+                        "title": "System Pages (UID & Config)" if s == 0 else f"User Memory (Pages {s*4}-{s*4+3})",
+                        "blocks": []
+                    }
+                    for b_offset in range(4):
+                        page_num = s * 4 + b_offset
+                        res = self.try_read_block(conn, page_num, is_ultralight=True)
+                        if page_num == 0:
+                            res["type"] = "Manufacturer / Serial (Page 0)"
+                        elif page_num == 1:
+                            res["type"] = "Manufacturer / Serial (Page 1)"
+                        elif page_num == 2:
+                            res["type"] = "Static Lock Bytes (Page 2)"
+                        elif page_num == 3:
+                            res["type"] = "OTP Memory (Page 3)"
+                        else:
+                            res["type"] = f"User Data (Page {page_num})"
+
+                        if res["status"] == "success":
+                            unlocked_count += 1
+                        sec_info["blocks"].append(res)
+                    sectors.append(sec_info)
+
+            else:
+                # MIFARE Classic 1K: 16 sectors, 4 blocks each = 64 blocks
+                total_blocks = 64
+                for s in range(16):
+                    sector_info = {
+                        "sector": s,
+                        "title": "Manufacturer Sector" if s == 0 else f"Data Sector {s}",
+                        "blocks": []
+                    }
+                    for b_offset in range(4):
+                        block_num = s * 4 + b_offset
+                        block_res = self.try_read_block(conn, block_num, is_ultralight=False)
+
+                        if block_num == 0:
+                            block_res["type"] = "Manufacturer Block (UID)"
+                        elif b_offset == 3:
+                            block_res["type"] = "Sector Trailer (Keys)"
+                            # Mask key bytes for trailer
+                            if block_res["status"] == "success":
+                                raw = block_res["raw"]
+                                acc = ' '.join(f'{b:02X}' for b in raw[6:10])
+                                block_res["hex"] = f"** ** ** ** ** ** {acc} ** ** ** ** ** **"
+                                block_res["ascii"] = "****** ACCESS ******"
+                        else:
+                            block_res["type"] = "User Data"
+
+                        if block_res["status"] == "success":
+                            unlocked_count += 1
+
+                        sector_info["blocks"].append(block_res)
+
+                    sectors.append(sector_info)
+
+            self.emit_log(f"Memory dump complete: {unlocked_count}/{total_blocks} blocks unlocked", "success")
+
+            return {
+                "status": "success",
+                "uid": uid_hex,
+                "uid_formatted": uid_fmt,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "total_sectors": len(sectors),
+                "unlocked_blocks": unlocked_count,
+                "total_blocks": total_blocks,
+                "sectors": sectors
+            }
+        except Exception as e:
+            err_msg = str(e)
+            self.emit_log(f"Card dump error: {err_msg}", "error")
+            return {"status": "error", "message": f"Dump failed: {err_msg}"}
 
     def loop(self):
         """Main loop for webapp"""
@@ -247,8 +488,37 @@ class ACR1281Service:
                 uid_fmt = card.get('uid_formatted', card.get('uid'))
                 uid_dec = card.get('uid_decimal', '')
                 ctype = card.get('type', '')
-                print(f"\n[ACR1281] >>> CARD DETECTED! UID: {uid_fmt} (Dec: {uid_dec}) | Type: {ctype}\n")
-                self.emit_log(f"CARD TAPPED -> UID: {uid_fmt} (Dec: {uid_dec}) | Type: {ctype}", "success")
+
+                print(f"\n=======================================================")
+                print(f"[ACR1281] >>> CARD DETECTED!")
+                print(f"  UID (Hex):    {uid_fmt}")
+                print(f"  UID (Dec):    {uid_dec}")
+                print(f"  Card Type:    {ctype}")
+                print(f"  ATR:          {card.get('atr', 'N/A')}")
+                print(f"-------------------------------------------------------")
+                print(f"  Card Memory Blocks:")
+
+                self.emit_log(f"CARD TAPPED -> UID: {uid_fmt} | {ctype}", "success")
+
+                blocks = card.get('blocks', [])
+                any_unlocked = False
+                for b in blocks:
+                    label = b.get('label', f"Block {b.get('block')}")
+                    if b.get('status') == 'success':
+                        any_unlocked = True
+                        h = b.get('hex')
+                        asc = b.get('ascii')
+                        print(f"  [{label}] {h}  |  {asc}")
+                        self.emit_log(f"{label}: {h} | \"{asc}\"", "info")
+                    else:
+                        print(f"  [{label}] [LOCKED / PROTECTED]")
+
+                if not any_unlocked and blocks:
+                    print(f"  [Notice] Data blocks are locked with custom vendor key.")
+                    self.emit_log("Card data blocks are protected with custom key", "warning")
+
+                print(f"=======================================================\n")
+
                 if self.socketio:
                     self.socketio.emit('card_detected', card)
                 time.sleep(1.5) # Debounce
