@@ -97,7 +97,7 @@
                 </div>
                 <div style="display:flex;gap:10px;margin-top:16px;width:100%;max-width:400px">
                     <button onclick="resetView()" style="flex:1;background:#1e293b;margin:0">← Another Card</button>
-                    <button onclick="requestCardDump()" style="flex:1.2;background:#2563eb;margin:0">📥 Dump All Sectors</button>
+                    <button id="scostaBtn" onclick="requestScostaScan()" style="flex:1.2;background:#059669;margin:0">🔍 Scan SCOSTA Files</button>
                 </div>
             </div>
         </div>
@@ -115,28 +115,39 @@
         </div>
     </div>
 
-    <!-- Memory Dump Modal -->
-    <div id="dumpModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);backdrop-filter:blur(6px);z-index:999;align-items:center;justify-content:center;padding:20px">
+    <!-- SCOSTA File System Modal -->
+    <div id="scostaModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);backdrop-filter:blur(6px);z-index:999;align-items:center;justify-content:center;padding:20px">
         <div style="background:#0f172a;border:1px solid #334155;border-radius:16px;width:100%;max-width:960px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 25px 50px rgba(0,0,0,0.6)">
-            <!-- Header -->
             <div style="padding:16px 24px;border-bottom:1px solid #1e293b;display:flex;justify-content:space-between;align-items:center">
                 <div>
-                    <h3 style="font-size:18px;display:flex;align-items:center;gap:8px">💾 MIFARE Card Memory Dump <span id="dumpUidBadge" style="font-size:13px;background:#1e293b;padding:3px 10px;border-radius:6px;font-family:monospace;color:#38bdf8"></span></h3>
-                    <small id="dumpSummary" style="color:#94a3b8">16 Sectors / 64 Blocks</small>
+                    <h3 style="font-size:18px;display:flex;align-items:center;gap:8px">🔍 SCOSTA / SmartSCOS File System <span id="scostaUidBadge" style="font-size:13px;background:#1e293b;padding:3px 10px;border-radius:6px;font-family:monospace;color:#38bdf8"></span></h3>
+                    <small id="scostaSummary" style="color:#10b981;font-weight:600">ISO 7816-4 & SCOSTA v1.2b Standard</small>
                 </div>
                 <div style="display:flex;gap:8px;align-items:center">
-                    <button onclick="copyDumpHex()" style="background:#1e293b;padding:8px 14px;font-size:12px;margin:0">📋 Copy Hex</button>
-                    <button onclick="downloadDumpJSON()" style="background:#1e293b;padding:8px 14px;font-size:12px;margin:0">💾 Export JSON</button>
-                    <button onclick="closeDumpModal()" style="background:#ef4444;padding:8px 12px;font-size:12px;margin:0">✕ Close</button>
+                    <button onclick="closeScostaModal()" style="background:#ef4444;padding:8px 12px;font-size:12px;margin:0">✕ Close</button>
                 </div>
             </div>
-            <!-- Body -->
-            <div id="dumpBody" style="padding:20px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;font-family:monospace">
-                <div id="dumpLoading" style="text-align:center;padding:40px">
+            <div id="scostaBody" style="padding:20px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;font-family:sans-serif">
+                <div id="scostaLoading" style="text-align:center;padding:40px">
                     <div style="font-size:36px" class="pulse">⏳</div>
-                    <p style="margin-top:12px;color:#94a3b8">Authenticating Sectors and Reading Blocks... Please hold card on reader.</p>
+                    <p style="margin-top:12px;color:#94a3b8">Scanning Smart Card File System (MF 3F00, Tag 46, EFs)... Please hold card on reader.</p>
                 </div>
-                <div id="dumpContent" style="display:none;display:flex;flex-direction:column;gap:10px"></div>
+                <div id="scostaContent" style="display:none">
+                    <div id="scostaCardState" style="padding:10px 14px;border-radius:8px;background:#1e293b;margin-bottom:14px;font-weight:600;color:#38bdf8"></div>
+                    <table style="width:100%;border-collapse:collapse;font-size:13px;text-align:left">
+                        <thead>
+                            <tr style="border-bottom:1px solid #334155;color:#94a3b8">
+                                <th style="padding:8px">Type</th>
+                                <th style="padding:8px">File ID</th>
+                                <th style="padding:8px">Description</th>
+                                <th style="padding:8px">SW</th>
+                                <th style="padding:8px">Status</th>
+                                <th style="padding:8px">Content / Data</th>
+                            </tr>
+                        </thead>
+                        <tbody id="scostaTableBody"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
@@ -147,7 +158,6 @@
     const device = document.getElementById('device');
     const badge = document.getElementById('badge');
     const logBox = document.getElementById('log');
-    let lastDumpData = null;
     
     // Status update
     socket.on('reader_status', d => {
@@ -201,6 +211,21 @@
         document.getElementById('ctype').innerText = data.type;
         document.getElementById('atr').innerText = data.atr;
         document.getElementById('time').innerText = data.timestamp;
+
+        const dumpBtn = document.getElementById('dumpBtn');
+        const scostaBtn = document.getElementById('scostaBtn');
+        const previewLabel = document.querySelector('#blockDataBox .label');
+
+        if (data.is_scosta) {
+            if (dumpBtn) dumpBtn.style.display = 'none';
+            if (scostaBtn) scostaBtn.style.display = 'block';
+            if (previewLabel) previewLabel.innerText = 'SCOSTA File System Preview';
+        } else {
+            if (dumpBtn) dumpBtn.style.display = 'block';
+            if (scostaBtn) scostaBtn.style.display = 'none';
+            if (previewLabel) previewLabel.innerText = 'Memory Preview (Blocks)';
+        }
+
         const blocksList = document.getElementById('blocksList');
         blocksList.innerHTML = '';
         if(data.blocks && data.blocks.length > 0){
@@ -211,10 +236,55 @@
                 item.style.background = 'rgba(15, 23, 42, 0.7)';
                 if(b.status === 'success'){
                     item.innerHTML = `<span style="color:#94a3b8">${b.label}:</span> <span style="color:#a5f3fc">${b.hex}</span> <span style="color:#fde047;margin-left:4px">"${escapeHtml(b.ascii)}"</span>`;
+                } else if(b.status === 'locked'){
+                    item.innerHTML = `<span style="color:#94a3b8">${b.label}:</span> <span style="color:#f59e0b">⚠️ [${escapeHtml(b.ascii || 'LOCKED')}]</span>`;
                 } else {
                     item.innerHTML = `<span style="color:#94a3b8">${b.label}:</span> <span style="color:#ef4444">🔒 [LOCKED / PROTECTED]</span>`;
                 }
                 blocksList.appendChild(item);
+            });
+        }
+    });
+
+    function requestScostaScan() {
+        const modal = document.getElementById('scostaModal');
+        modal.style.display = 'flex';
+        document.getElementById('scostaLoading').style.display = 'block';
+        document.getElementById('scostaContent').style.display = 'none';
+        document.getElementById('scostaUidBadge').innerText = document.getElementById('uid').innerText;
+        socket.emit('scan_scosta');
+    }
+
+    function closeScostaModal() {
+        document.getElementById('scostaModal').style.display = 'none';
+    }
+
+    socket.on('scosta_scan_result', result => {
+        document.getElementById('scostaLoading').style.display = 'none';
+        const content = document.getElementById('scostaContent');
+        content.style.display = 'block';
+        if (result.status === 'error') {
+            document.getElementById('scostaCardState').innerHTML = `<span style="color:#ef4444">⚠️ Error: ${escapeHtml(result.message)}</span>`;
+            return;
+        }
+
+        document.getElementById('scostaCardState').innerHTML = `<span>Card Status:</span> <span style="color:#34d399">${escapeHtml(result.card_state)}</span>`;
+        const tbody = document.getElementById('scostaTableBody');
+        tbody.innerHTML = '';
+        if (result.files && result.files.length > 0) {
+            result.files.forEach(f => {
+                const tr = document.createElement('tr');
+                tr.style.borderBottom = '1px solid #1e293b';
+                const badgeColor = f.status_badge === 'success' ? '#10b981' : (f.status_badge === 'warning' ? '#f59e0b' : '#64748b');
+                tr.innerHTML = `
+                    <td style="padding:8px;color:#94a3b8">${escapeHtml(f.type)}</td>
+                    <td style="padding:8px;font-family:monospace;font-weight:600;color:#38bdf8">${escapeHtml(f.id)}</td>
+                    <td style="padding:8px">${escapeHtml(f.name)}</td>
+                    <td style="padding:8px;font-family:monospace">${escapeHtml(f.sw)}</td>
+                    <td style="padding:8px"><span style="background:${badgeColor}22;color:${badgeColor};padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">${escapeHtml(f.status)}</span></td>
+                    <td style="padding:8px;font-family:monospace;color:#e2e8f0">${escapeHtml(f.content || '-')}</td>
+                `;
+                tbody.appendChild(tr);
             });
         }
     });
@@ -223,115 +293,8 @@
         alert(d.message);
     });
 
-    // Card Dump Result
-    socket.on('dump_result', result => {
-        const loading = document.getElementById('dumpLoading');
-        const content = document.getElementById('dumpContent');
-        loading.style.display = 'none';
-
-        if(result.status !== 'success'){
-            content.style.display = 'block';
-            content.innerHTML = `<div style="padding:20px;background:rgba(239,68,68,0.1);border-left:4px solid #ef4444;border-radius:8px"><b>Error:</b> ${result.message}</div>`;
-            return;
-        }
-
-        lastDumpData = result;
-        document.getElementById('dumpUidBadge').innerText = `UID: ${result.uid_formatted}`;
-        document.getElementById('dumpSummary').innerText = `Unlocked: ${result.unlocked_blocks} / ${result.total_blocks} Blocks | Timestamp: ${result.timestamp}`;
-
-        content.style.display = 'flex';
-        content.innerHTML = '';
-
-        result.sectors.forEach(sec => {
-            const secBox = document.createElement('div');
-            secBox.className = 'sector-box';
-            
-            let rowsHtml = '';
-            sec.blocks.forEach(b => {
-                let typeColor = 'tag-data';
-                if(b.type.includes('Manufacturer')) typeColor = 'tag-mfg';
-                if(b.type.includes('Trailer')) typeColor = 'tag-trailer';
-
-                let statusBadge = b.status === 'success' 
-                    ? '<span style="color:#22c55e">● Unlocked</span>' 
-                    : '<span style="color:#ef4444">🔒 Locked</span>';
-
-                rowsHtml += `
-                    <tr>
-                        <td style="color:#94a3b8;width:70px">Block ${b.block}</td>
-                        <td class="${typeColor}" style="width:180px">${b.type}</td>
-                        <td class="hex-data">${b.hex}</td>
-                        <td class="ascii-data">${escapeHtml(b.ascii)}</td>
-                        <td style="text-align:right;width:90px">${statusBadge}</td>
-                    </tr>
-                `;
-            });
-
-            secBox.innerHTML = `
-                <div class="sector-header">
-                    <span>${sec.title}</span>
-                    <span style="font-size:11px;color:#64748b">Sector ${sec.sector}</span>
-                </div>
-                <table class="block-table">
-                    <thead>
-                        <tr>
-                            <th>Block</th>
-                            <th>Type</th>
-                            <th>Data (Hex 16 Bytes)</th>
-                            <th>ASCII Text</th>
-                            <th style="text-align:right">Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>${rowsHtml}</tbody>
-                </table>
-            `;
-            content.appendChild(secBox);
-        });
-    });
-
     function escapeHtml(text) {
         return text ? text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") : '';
-    }
-
-    function requestCardDump(){
-        const modal = document.getElementById('dumpModal');
-        const loading = document.getElementById('dumpLoading');
-        const content = document.getElementById('dumpContent');
-        modal.style.display = 'flex';
-        loading.style.display = 'block';
-        content.style.display = 'none';
-        content.innerHTML = '';
-        socket.emit('dump_card');
-    }
-
-    function closeDumpModal(){
-        document.getElementById('dumpModal').style.display = 'none';
-    }
-
-    function copyDumpHex(){
-        if(!lastDumpData) return alert("No dump data to copy!");
-        let output = `MIFARE CARD DUMP - UID: ${lastDumpData.uid_formatted}\n\n`;
-        lastDumpData.sectors.forEach(s => {
-            output += `--- Sector ${s.sector} ---\n`;
-            s.blocks.forEach(b => {
-                output += `Block ${String(b.block).padStart(2, '0')}: ${b.hex}  |  ${b.ascii}\n`;
-            });
-            output += '\n';
-        });
-        navigator.clipboard.writeText(output).then(()=>{
-            alert("Card Hex dump copied to clipboard!");
-        });
-    }
-
-    function downloadDumpJSON(){
-        if(!lastDumpData) return alert("No dump data!");
-        const blob = new Blob([JSON.stringify(lastDumpData, null, 2)], {type: 'application/json'});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `card_dump_${lastDumpData.uid}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
     }
     
     function resetView(){
@@ -359,13 +322,16 @@
     function simulate(){
         const fake = {
             interface: 'Contactless (PICC)',
-            uid: '08B63851',
-            uid_formatted: '08:B6:38:51',
-            uid_decimal: '146159697',
-            type: 'MIFARE Classic 1K',
+            uid: '088AFD3D',
+            uid_formatted: '08:8A:FD:3D',
+            uid_decimal: '143326525',
+            type: 'SCOSTA / SmartSCOS (ISO 14443-4)',
             atr: '3B 89 80 01 53 6D 61 72 74 53 43 4F 53 5D',
             timestamp: new Date().toLocaleTimeString(),
-            block_data: '00 00 00 00 00 00 00 00 | "User Card"'
+            blocks: [
+                { label: 'Root MF (3F00)', hex: '3F 00', ascii: 'ROOT OK (9000)', status: 'success' },
+                { label: 'DF SCOSTA', hex: 'A0 00 00 01 03 00 00', ascii: 'Blank (6A82)', status: 'locked' }
+            ]
         };
         socket.emit('card_detected', fake);
         renderLogEntry({
