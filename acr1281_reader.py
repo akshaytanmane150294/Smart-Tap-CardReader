@@ -8,11 +8,11 @@ Works with pyscard (PC/SC)
 import sys
 import time
 import threading
-from smartcard.System import readers
-from smartcard.util import toHexString, toBytes
+from smartcard.System import readers # List Readers
+from smartcard.util import toHexString, toBytes # Convert Bytes
 from smartcard.Exceptions import NoCardException, CardConnectionException
-from smartcard.ReaderMonitoring import ReaderMonitor, ReaderObserver
-from smartcard.CardConnectionObserver import CardConnectionObserver
+from smartcard.ReaderMonitoring import ReaderMonitor, ReaderObserver #USB reader plug/unplug hone ko automatically detect karte hain.
+from smartcard.CardConnectionObserver import CardConnectionObserver # APDU commands aur responses ko intercept (pakadne) ke liye
 
 if sys.platform == 'win32':
     try:
@@ -24,6 +24,8 @@ if sys.platform == 'win32':
 
 class APDUConnectionObserver(CardConnectionObserver):
     """
+    # APDUConnectionObserver - Har APDU ka hisab rakhega
+
     Pyscard Framework Observer to intercept and log raw APDU commands and responses.
     Streams APDU traffic to the frontend console in real time.
     """
@@ -33,6 +35,10 @@ class APDUConnectionObserver(CardConnectionObserver):
         self.enabled = False
 
     def interpret_apdu(self, apdu_bytes):
+        # Tum jo bytes bhejte ho 00 A4 00 00 02 3F00, isko ye readable banata hai
+        # Basically, ye code APDU commands ko read karne layak banata hai.
+        # APDU = Application Protocol Data Unit (Commands and Responses exchanged between reader and card)
+
         if not apdu_bytes or len(apdu_bytes) < 4:
             return "APDU"
         cla, ins, p1, p2 = apdu_bytes[:4]
@@ -52,6 +58,7 @@ class APDUConnectionObserver(CardConnectionObserver):
         return f"INS:{ins:02X}"
 
     def interpret_sw(self, sw1, sw2):
+        # Card jo jawab deta hai 90 00, 6A82 usko human banata hai -> Success, File Not Found
         sw = (sw1 << 8) | sw2
         if sw == 0x9000:
             return "Success (9000)"
@@ -78,7 +85,10 @@ class APDUConnectionObserver(CardConnectionObserver):
             if handlers.type == "command":
                 cmd_bytes = handlers.args[0]
                 label = self.interpret_apdu(cmd_bytes)
-                hex_cmd = toHexString(cmd_bytes)
+                hex_cmd = toHexString(cmd_bytes) # cmd_bytes = [0xFF, 0xCA, 0x00, 0x00, 0x00] convert to "FF CA 00 00 00"
+
+                # Jab bhi conn.transmit() hota hai, pyscard isko auto call karta hai. 
+                # Tumhara emit_log() se ye frontend pe live dikhta hai:
                 self.service.emit_log(f"APDU TX > {hex_cmd} ({label})", "info")
             elif handlers.type == "response":
                 resp_data = handlers.args[0]
@@ -99,12 +109,16 @@ class ACR1281ReaderObserver(ReaderObserver):
     """
     Pyscard Framework Observer for instant USB Smart Card Reader Plug & Play detection.
     """
+    # Ye class Plug & Play monitor hai:
     def __init__(self, service):
         super().__init__()
         self.service = service
         self.first_run = True
 
     def update(self, observable, handlers):
+        # Jese hi reader plug-in ya unplug hota hai, pyscard ye method call karta hai.
+        # added_readers: Agar user ne USB cable lagayi toh frontend ko event bhejta hai: "USB Reader Connected".
+        # removed_readers: Agar reader unplug kiya toh event bhejta hai: "USB Reader Disconnected".
         added_readers, removed_readers = handlers
         if self.first_run:
             self.first_run = False
@@ -122,16 +136,18 @@ class ACR1281ReaderObserver(ReaderObserver):
 
 
 class ACR1281Service:
+    # Ye main controller class hai jo poore smart card lifecycle ko handle karti hai
     def __init__(self, socketio=None):
         self.socketio = socketio
-        self.last_uid = None
-        self.last_atr = None
-        self.last_card_data = None
-        self.scanning = False
-        self.log_history = []
-        self.max_logs = 100
-        self.reader_lock = threading.Lock()
+        self.last_uid = None # Pichle card ka record taaki ek hi card tap rehne par baar-baar repeat na ho.
+        self.last_atr = None # ATR (Answer to Reset) - Card ki identity aur capabilities batata hai.
+        self.last_card_data = None # Card se read kiya gaya latest data (bytes/hex)
+        self.scanning = False # Agar true ho toh card data continuously scan hota rahega.
+        self.log_history = [] # Yahan har log entry save hogi (like a notepad).
+        self.max_logs = 100 # Sirf last 100 logs rakhega, purane delete kar deta hai.
+        self.reader_lock = threading.Lock() # Ye lock ensure karta hai ki do threads ek saath reader ko access na karein (race condition se bachata hai).
         self.last_scosta_result = None
+        self.last_userdata = None
 
         # Pyscard Framework Observers
         self.apdu_observer = APDUConnectionObserver(self)
@@ -207,6 +223,7 @@ class ACR1281Service:
 
     def get_acr1281_reader(self, prefer_contactless=True):
         """Get ACR1281 reader handle specifically (PICC for contactless, ICC for contact)"""
+        # ACR1281U-C1 me 2 interfaces hote hain: PICC (Contactless) and ICC (Contact)
         try:
             all_readers = readers()
             contactless = None
@@ -255,7 +272,7 @@ class ACR1281Service:
             conn.connect()
             
             # APDU: Get UID - Works on ACR1281
-            GET_UID = [0xFF, 0xCA, 0x00, 0x00, 0x00]
+            GET_UID = [0xFF, 0xCA, 0x00, 0x00, 0x00] #ACR1281 standard command se card ka UID fetch karta hai.
             data, sw1, sw2 = conn.transmit(GET_UID)
             
             if sw1 == 0x90 and sw2 == 0x00:
@@ -267,19 +284,18 @@ class ACR1281Service:
                     return self.last_card_data
 
                 # Get ATR for extra info
-                atr = toHexString(conn.getATR())
+                atr = toHexString(conn.getATR()) #Card ka ATR (Answer To Reset) leta hai jisse card ki technology pata chalti hai.
                 
                 # Detect card type from ATR / UID length
                 card_type = self.detect_card_type(uid_hex, atr)
                 is_scosta = self.is_scosta_card(atr)
                 
                 # Read SCOSTA file preview if applicable
-                blocks = []
                 scosta_info = None
                 try:
                     if is_scosta:
-                        blocks, scosta_info = self.read_scosta_preview(conn)
-                except:
+                        scosta_info = self.read_scosta_preview(conn)
+                except Exception:
                     pass
 
                 card_data = {
@@ -294,11 +310,10 @@ class ACR1281Service:
                     "scosta_info": scosta_info,
                     "protocol": "T=1" if "3B" in atr else "T=0",
                     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "raw_data": data,
-                    "blocks": blocks
+                    "raw_data": data
                 }
                 self.last_card_data = card_data
-                if is_scosta and blocks:
+                if is_scosta and scosta_info:
                     self.last_scosta_result = {
                         "status": "success",
                         "uid": uid_hex,
@@ -308,17 +323,48 @@ class ACR1281Service:
                         "card_state": "SmartSCOS Card Active (MF 3F00 Open)",
                         "files": [
                             {
-                                "type": b.get("type", "File"),
-                                "id": b.get("label", ""),
-                                "name": b.get("label", ""),
-                                "sw": "9000" if b.get("status") == "success" else "6A82",
-                                "status": "OPEN" if b.get("status") == "success" else "NOT CREATED (Blank)",
-                                "status_badge": "success" if b.get("status") == "success" else "secondary",
-                                "content": b.get("ascii", "")
+                                "type": "Master File Root Directory",
+                                "id": "Root MF (3F00)",
+                                "name": "Root MF (3F00)",
+                                "sw": "9000",
+                                "status": "OPEN",
+                                "status_badge": "success",
+                                "content": "ROOT OK (9000)"
+                            },
+                            {
+                                "type": "Elementary File (EF)",
+                                "id": "EF 4 / SFI 4",
+                                "name": "EF 4 / SFI 4 (Student Profile)",
+                                "sw": "9000",
+                                "status": "OPEN",
+                                "status_badge": "success",
+                                "content": f"{scosta_info.get('student_name', 'Student')} ({scosta_info.get('roll_no', 'Active')})" if scosta_info else "Student Profile Active"
                             }
-                            for b in blocks
                         ]
                     }
+                    if scosta_info:
+                        doj = scosta_info.get("date_of_joining") or scosta_info.get("DateofJoining") or scosta_info.get("doj")
+                        self.last_userdata = {
+                            "status": "success",
+                            "uid": uid_formatted,
+                            "atr": atr,
+                            "userdata": {
+                                "roll_no": scosta_info.get("roll_no"),
+                                "name": scosta_info.get("student_name") or scosta_info.get("name"),
+                                "department": scosta_info.get("department"),
+                                "validity": scosta_info.get("validity"),
+                                "dob": scosta_info.get("dob"),
+                                "doj": doj,
+                                "date_of_joining": doj,
+                                "DateofJoining": doj,
+                                "mobile": scosta_info.get("mobile"),
+                                "blood_group": scosta_info.get("blood_group"),
+                                "gender": scosta_info.get("gender"),
+                                "user_id": scosta_info.get("user_id"),
+                                "authority": scosta_info.get("authority")
+                            }
+                        }
+                        card_data["userdata"] = self.last_userdata["userdata"]
                 return card_data
             else:
                 return None
@@ -381,83 +427,79 @@ class ACR1281Service:
         atr_clean = atr.replace(" ", "").upper()
         if uid.startswith("08") and len(uid) == 8:
             return "ISO 14443-A Smart Card (Random UID)"
-    def parse_scosta_student_record(self, data_bytes):
+
+    def parse_scosta_student_record(self, data, level=0):
         """Parse ASN.1 / TLV / String structures from SCOSTA Student File (SFI 4 / EF 4)"""
-        import re
-        extracted = {}
-        strings_found = []
+        index = 0
+        extracted_results = []
+        data_bytes = bytes(data)
         
-        # 1. Parse standard ASN.1 / BER-TLV tags
-        idx = 0
-        if len(data_bytes) > 4 and data_bytes[0] == 0x30:
-            if data_bytes[1] == 0x82:
-                idx = 4
-            elif data_bytes[1] == 0x81:
-                idx = 3
-            else:
-                idx = 2
+        while index < len(data_bytes):
+            if index + 1 >= len(data_bytes):
+                break
                 
-        while idx < len(data_bytes) - 1:
-            tag = data_bytes[idx]
-            length = data_bytes[idx+1]
-            val_start = idx + 2
-            if length == 0x81 and idx + 2 < len(data_bytes):
-                length = data_bytes[idx+2]
-                val_start = idx + 3
-            elif length == 0x82 and idx + 3 < len(data_bytes):
-                length = (data_bytes[idx+2] << 8) | data_bytes[idx+3]
-                val_start = idx + 4
+            # 1. Tag Nikalna
+            tag = data_bytes[index]
+            index += 1
+            
+            # 2. Length Nikalna (Handling Short and Long Forms)
+            length_byte = data_bytes[index]
+            index += 1
+            
+            if length_byte & 0x80:  # Agar long form length hai (jaise 0x82)
+                num_length_bytes = length_byte & 0x7F
+                if index + num_length_bytes > len(data_bytes):
+                    break
+                length = int.from_bytes(data_bytes[index : index + num_length_bytes], byteorder='big')
+                index += num_length_bytes
+            else:                   # Agar short form length hai (0 se 127)
+                length = length_byte
                 
-            if val_start + length <= len(data_bytes) and length > 0:
-                val_bytes = data_bytes[val_start : val_start + length]
-                txt = ''.join(chr(b) if 32 <= b <= 126 else '' for b in val_bytes).strip()
-                if txt and len(txt) >= 2:
-                    if txt not in strings_found:
-                        strings_found.append(txt)
-                idx = val_start + length
+            is_constructed = bool(tag & 0x20)
+            if index + length > len(data_bytes):
+                if is_constructed:
+                    value = data_bytes[index:]
+                    index = len(data_bytes)
+                else:
+                    break
             else:
-                idx += 1
-
-        # 2. Extract consecutive printable strings from entire byte stream
-        current_str = []
-        for b in data_bytes:
-            if 32 <= b <= 126:
-                current_str.append(chr(b))
+                value = data_bytes[index : index + length]
+                index += length
+            
+            if not is_constructed:
+                try:
+                    text_val = value.decode('utf-8')
+                    if text_val.isprintable() and len(text_val) > 1:
+                        extracted_results.append(text_val)
+                except Exception:
+                    pass
             else:
-                if len(current_str) >= 2:
-                    s = ''.join(current_str).strip()
-                    if s and s not in strings_found:
-                        strings_found.append(s)
-                current_str = []
-        if len(current_str) >= 2:
-            s = ''.join(current_str).strip()
-            if s and s not in strings_found:
-                strings_found.append(s)
+                sub_results = self.parse_scosta_student_record(value, level + 1)
+                extracted_results.extend(sub_results)
 
-        # 3. Categorize extracted strings
-        for s in strings_found:
-            date_match = re.search(r'\b\d{2}/\d{2}/\d{4}\b', s)
-            if date_match and "validity" not in extracted:
-                extracted["validity"] = date_match.group(0)
-            elif re.search(r'^[A-Z]\d{2}[A-Z]{2}\d{3}$', s):
-                extracted["roll_no"] = s
-            elif re.search(r'^[A-Z0-9]{6,12}$', s) and not re.match(r'^\d+$', s) and "roll_no" not in extracted:
-                extracted["roll_no"] = s
+        if level == 0:
+            return {
+                "roll_no": extracted_results[0] if len(extracted_results) > 0 else None,
+                "validity": extracted_results[1] if len(extracted_results) > 1 else None,
+                "name": extracted_results[2] if len(extracted_results) > 2 else None,
+                "dob": extracted_results[3] if len(extracted_results) > 3 else None,
+                "user_id": extracted_results[4] if len(extracted_results) > 4 else None,
+                "mobile": extracted_results[5] if len(extracted_results) > 5 else None,
+                "blood_group": extracted_results[6] if len(extracted_results) > 6 else None,
+                "authority": extracted_results[7] if len(extracted_results) > 7 else None,
+                "gender": extracted_results[8] if len(extracted_results) > 8 else None,
+                "DateofJoining": extracted_results[9] if len(extracted_results) > 9 else None,
+                "department": extracted_results[10] if len(extracted_results) > 10 else None,
+                "all_strings": extracted_results
+            }
 
-        remaining_strings = [s for s in strings_found if s != extracted.get("roll_no") and s != extracted.get("validity") and len(s) >= 3]
-        if remaining_strings:
-            extracted["name"] = remaining_strings[0]
-        if len(remaining_strings) > 1:
-            extracted["department"] = remaining_strings[1]
-        if len(remaining_strings) > 2:
-            extracted["additional_info"] = ', '.join(remaining_strings[2:])
+        return extracted_results
 
-        extracted["all_strings"] = strings_found
-        return extracted
+
+
 
     def read_scosta_preview(self, conn):
-        """Quick SCOSTA card preview: MF 3F00, Tag 46 chip serial, SCOSTA AID check"""
-        blocks = []
+        """Quick SCOSTA card preview: MF 3F00 and EF 4 Student Record"""
         scosta_data = {
             "is_scosta": True,
             "os": "CDAC SmartSCOS (SCOSTA v1.2b)",
@@ -480,283 +522,84 @@ class ACR1281Service:
                
                 if s1 == 0x90 and s2 == 0x00:
                     scosta_data["mf_status"] = "Open (9000)"
-                    blocks.append({
-                        "block": 0,
-                        "label": "Root MF (3F00)",
-                        "hex": "3F 00",
-                        "ascii": "ROOT OK (9000)",
-                        "status": "success",
-                        "type": "Master File Root Directory"
-                    })
-
-                    # Try EF_ICCID (2FE2) - Standard ISO 7816-4 Unique Chip ID File present under Root MF
-                    try:
-                        # 1. SELECT EF_ICCID (2FE2)
-                        ic_data, ic1, ic2 = conn.transmit([0x00, 0xA4, 0x00, 0x00, 0x02, 0x2F, 0xE2])
-                        if ic1 == 0x90 or ic1 == 0x61:
-                            # 2. READ BINARY (ICCID is typically 10 bytes, or read up to 256)
-                            r_data, r1, r2 = conn.transmit([0x00, 0xB0, 0x00, 0x00, 0x0A])
-                            if r1 == 0x6C:
-                                r_data, r1, r2 = conn.transmit([0x00, 0xB0, 0x00, 0x00, r2])
-                            if (r1 == 0x90 or r1 == 0x61) and r_data:
-                                iccid_hex = ''.join(f'{b:02X}' for b in r_data)
-                                blocks.append({
-                                    "block": len(blocks),
-                                    "label": "EF_ICCID (2FE2)",
-                                    "hex": iccid_hex,
-                                    "ascii": "Chip ICCID Read OK",
-                                    "status": "success",
-                                    "type": "Chip Serial / ICCID"
-                                })
-                                scosta_data["chip_serial"] = iccid_hex
-                        # Re-select MF to keep position at root
-                        conn.transmit([0x00, 0xA4, 0x00, 0x00, 0x02, 0x3F, 0x00])
-                    except Exception:
-                        pass
-
-                    # 2. Direct SFI READ BINARY (ISO 7816-4: P1 = 0x80 | SFI, no SELECT command)
-                    sfi_list = [
-                        (0x04, "EF 4 / SFI 4 (Student Profile)"),
-                        (0x01, "EF 1 / SFI 1"),
-                        (0x02, "EF 2 / SFI 2"),
-                        (0x03, "EF 3 / SFI 3"),
-                        (0x05, "EF 5 / SFI 5"),
-                        (0x06, "EF 6 / SFI 6"),
-                        (0x07, "EF 7 / SFI 7"),
-                        (0x08, "EF 8 / SFI 8"),
-                        (0x1D, "EF_ATR (SFI 29)"),
-                        (0x1E, "EF_DIR (SFI 30)")
-                    ]
-                    for sfi, sfi_label in sfi_list:
-                        try:
-                            time.sleep(0.02)
-                            p1_sfi = 0x80 | (sfi & 0x1F)
-                            # Direct READ BINARY by SFI (first 256 bytes)
-                            r_data, r1, r2 = conn.transmit([0x00, 0xB0, p1_sfi, 0x00, 0x00])
-                            if r1 == 0x6C:
-                                r_data, r1, r2 = conn.transmit([0x00, 0xB0, p1_sfi, 0x00, r2])
-                            
-                            if (r1 == 0x90 or r1 == 0x61) and r_data:
-                                full_file = bytearray(r_data)
-                                
-                                # Try reading second chunk at offset 0x80 if first chunk succeeded
-                                try:
-                                    c_data, c1, c2 = conn.transmit([0x00, 0xB0, p1_sfi, 0x80, 0x00])
-                                    if c1 == 0x6C:
-                                        c_data, c1, c2 = conn.transmit([0x00, 0xB0, p1_sfi, 0x80, c2])
-                                    if (c1 == 0x90 or c1 == 0x61) and c_data:
-                                        full_file.extend(c_data)
-                                except Exception:
-                                    pass
-
-                                # Parse decoded fields from file
-                                extracted = self.parse_scosta_student_record(list(full_file))
-                                
-                                if extracted.get("roll_no") or extracted.get("validity") or sfi == 0x04:
-                                    df_found = True
-                                    roll = extracted.get("roll_no", "P26BM001")
-                                    validity = extracted.get("validity", "30/06/2030")
-                                    scosta_data["roll_no"] = roll
-                                    scosta_data["validity"] = validity
-                                    scosta_data["app_status"] = f"Student ID Active: {roll}"
-
-                                    # Student Roll Number Block
-                                    blocks.append({
-                                        "block": len(blocks),
-                                        "label": "Student Roll No",
-                                        "hex": roll.encode().hex() if roll else "",
-                                        "ascii": roll,
-                                        "status": "success",
-                                        "type": "Student Identity Number"
-                                    })
-
-                                    # Validity Block
-                                    blocks.append({
-                                        "block": len(blocks),
-                                        "label": "Card Valid Thru",
-                                        "hex": validity.encode().hex() if validity else "",
-                                        "ascii": validity,
-                                        "status": "success",
-                                        "type": "Semester Validity / Expiry"
-                                    })
-
-                                    # Student Name Block if found
-                                    if extracted.get("name"):
-                                        scosta_data["student_name"] = extracted["name"]
-                                        blocks.append({
-                                            "block": len(blocks),
-                                            "label": "Student Name",
-                                            "hex": extracted["name"].encode().hex(),
-                                            "ascii": extracted["name"],
-                                            "status": "success",
-                                            "type": "Personal Name"
-                                        })
-
-                                    # Department Block if found
-                                    if extracted.get("department"):
-                                        blocks.append({
-                                            "block": len(blocks),
-                                            "label": "Department / Branch",
-                                            "hex": extracted["department"].encode().hex(),
-                                            "ascii": extracted["department"],
-                                            "status": "success",
-                                            "type": "Academic Department"
-                                        })
-
-                                    # Raw Printable Data Block
-                                    raw_text = ' | '.join(extracted.get("all_strings", []))
-                                    blocks.append({
-                                        "block": len(blocks),
-                                        "label": f"EF {sfi} Raw Strings",
-                                        "hex": ' '.join(f'{b:02X}' for b in r_data[:16]),
-                                        "ascii": raw_text[:64] if raw_text else "Binary OK",
-                                        "status": "success",
-                                        "type": f"SFI 0x{sfi:02X} Decoded Content"
-                                    })
-
-                                    # Print formatted details to terminal
-                                    print("\n" + "="*58)
-                                    print("  >>> STUDENT CARD DETECTED & DECODED! <<<")
-                                    print(f"  Roll No / Reg ID:   {roll}")
-                                    print(f"  Valid Thru:        {validity}")
-                                    if extracted.get("name"):
-                                        print(f"  Student Name:      {extracted['name']}")
-                                    if extracted.get("department"):
-                                        print(f"  Department/Branch: {extracted['department']}")
-                                    if extracted.get("all_strings"):
-                                        print(f"  All Strings:       {', '.join(extracted['all_strings'])}")
-                                    print("="*58 + "\n")
-                                else:
-                                    r_hex = ' '.join(f'{b:02X}' for b in r_data[:16])
-                                    r_txt = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in r_data[:32]).strip()
-                                    blocks.append({
-                                        "block": len(blocks),
-                                        "label": sfi_label,
-                                        "hex": r_hex,
-                                        "ascii": r_txt or "Binary Read OK",
-                                        "status": "success",
-                                        "type": f"SFI 0x{sfi:02X} Direct Read"
-                                    })
-                        except Exception:
-                            pass
-                else:
-                    scosta_data["mf_status"] = f"Error {s1:02X}{s2:02X}"
-                    blocks.append({
-                        "block": 0,
-                        "label": "Root MF (3F00)",
-                        "hex": f"SW: {s1:02X}{s2:02X}",
-                        "ascii": "Failed",
-                        "status": "error",
-                        "type": "Master File"
-                    })
-            except Exception as e:
-                scosta_data["mf_status"] = f"Err: {e}"
-
-            # 2. GET DATA for Tag 46 (Chip Serial Number from SCOSTA Spec Page 20)
-            try:
-                time.sleep(0.05)
-                data_46, g1, g2 = conn.transmit([0x00, 0xCA, 0x00, 0x46, 0x00])
-                if g1 == 0x6C:
-                    data_46, g1, g2 = conn.transmit([0x00, 0xCA, 0x00, 0x46, g2])
-                if (g1 == 0x90 or g1 == 0x61) and data_46:
-                    chip_hex = ' '.join(f'{b:02X}' for b in data_46)
-                    chip_txt = ''.join(chr(b) if 32 <= b <= 126 else '' for b in data_46).strip()
-                    scosta_data["chip_serial"] = chip_hex
-                    blocks.append({
-                        "block": 1,
-                        "label": "DO 46 (Chip Serial)",
-                        "hex": chip_hex,
-                        "ascii": chip_txt or "Chip Serial",
-                        "status": "success",
-                        "type": "Pre-Issuing Factory Serial"
-                    })
-            except:
-                pass
-
-            # 3. Dedicated File (DF) Discovery - Checks both AID (P1=0x04) and 2-byte DFs (P1=0x01)
-            df_found = False
-            candidates_df = [
-                # Type, Bytes, Label, Description
-                ("AID", [0xA0, 0x00, 0x00, 0x01, 0x03, 0x00, 0x00], "DF SCOSTA AID", "SCOSTA Official Application"),
-                ("AID", [0xA0, 0x00, 0x00, 0x00, 0x36, 0x03], "DF NIC SCOSTA", "NIC SCOSTA Application"),
-                ("DF", [0x10, 0x01], "DF 1001", "College Student Identity Directory"),
-                ("DF", [0x7F, 0x10], "DF 7F10", "Transport / Driving License Directory"),
-                ("DF", [0xDF, 0x01], "DF DF01", "Campus Access Directory")
-            ]
-            for c_type, c_bytes, c_label, c_desc in candidates_df:
-                try:
-                    time.sleep(0.04)
-                    if c_type == "AID":
-                        # P1=0x04: Card Application by AID Name
-                        _, a1, a2 = conn.transmit([0x00, 0xA4, 0x04, 0x00, len(c_bytes)] + c_bytes)
-                    else:
-                        # Dedicated File by 2-byte File ID (Try standard SCOSTA P1=0x00, P2=0x00 first, fallback to P1=0x01)
-                        _, a1, a2 = conn.transmit([0x00, 0xA4, 0x00, 0x00, 0x02, c_bytes[0], c_bytes[1]])
-                        if a1 != 0x90 and a1 != 0x61:
-                            _, a1, a2 = conn.transmit([0x00, 0xA4, 0x01, 0x0C, 0x02, c_bytes[0], c_bytes[1]])
                     
-                    if a1 == 0x90 or a1 == 0x61:
-                        df_found = True
-                        hex_str = ' '.join(f'{b:02X}' for b in c_bytes)
-                        scosta_data["app_status"] = f"{c_label} Found (9000)"
-                        blocks.append({
-                            "block": 2,
-                            "label": c_label,
-                            "hex": hex_str,
-                            "ascii": "APP FOLDER OPEN",
-                            "status": "success",
-                            "type": c_desc
-                        })
-
-                        # Read EFs inside this Application DF
-                        df_efs = [
-                            ("0001", "EF 0001 (PIN File)"),
-                            ("0002", "EF 0002 (Card Token)"),
-                            ("0003", "EF 0003 (Student Roll No)"),
-                            ("0004", "EF 0004 (Dept Details)"),
-                            ("0005", "EF 0005 (Student Name/DOB)"),
-                            ("0006", "EF 0006 (Address)"),
-                            ("0007", "EF 0007 (Validity)"),
-                            ("0008", "EF 0008 (Photo Binary)")
-                        ]
-                        for ef_fid, ef_label in df_efs:
+                    sfi = 0x04
+                    try:
+                        p1_sfi = 0x80 | (sfi & 0x1F)
+                        r_data, r1, r2 = conn.transmit([0x00, 0xB0, p1_sfi, 0x00, 0x00])
+                        if r1 == 0x6C:
+                            r_data, r1, r2 = conn.transmit([0x00, 0xB0, p1_sfi, 0x00, r2])
+                            
+                        if (r1 == 0x90 or r1 == 0x61) and r_data:
+                            full_file = bytearray(r_data)
+                            
+                            # Try reading second chunk at offset 0x80 if first chunk succeeded
                             try:
-                                b1, b2 = int(ef_fid[:2], 16), int(ef_fid[2:], 16)
-                                time.sleep(0.02)
-                                _, de1, de2 = conn.transmit([0x00, 0xA4, 0x00, 0x00, 0x02, b1, b2])
-                                if de1 == 0x90 or de1 == 0x61:
-                                    r_data, r1, r2 = conn.transmit([0x00, 0xB0, 0x00, 0x00, 0x00])
-                                    if r1 == 0x6C:
-                                        r_data, r1, r2 = conn.transmit([0x00, 0xB0, 0x00, 0x00, r2])
-                                    if (r1 == 0x90 or r1 == 0x61) and r_data:
-                                        r_hex = ' '.join(f'{b:02X}' for b in r_data[:16])
-                                        r_txt = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in r_data[:32]).strip()
-                                        blocks.append({
-                                            "block": len(blocks),
-                                            "label": f"{c_label} -> {ef_label}",
-                                            "hex": r_hex,
-                                            "ascii": r_txt or "Binary Read OK",
-                                            "status": "success",
-                                            "type": f"DF {c_label} File {ef_fid}"
-                                        })
+                                c_data, c1, c2 = conn.transmit([0x00, 0xB0, p1_sfi, 0x80, 0x00])
+                                if c1 == 0x6C:
+                                    c_data, c1, c2 = conn.transmit([0x00, 0xB0, p1_sfi, 0x80, c2])
+                                if (c1 == 0x90 or c1 == 0x61) and c_data:
+                                    full_file.extend(c_data)
                             except Exception:
                                 pass
-                        break
-                except Exception:
-                    pass
 
-            if not df_found:
-                scosta_data["app_status"] = "Blank Card (No Application DF - 6A82)"
-                blocks.append({
-                    "block": 2,
-                    "label": "DF Application",
-                    "hex": "1001 / SCOSTA AID",
-                    "ascii": "Not Created (6A82)",
-                    "status": "locked",
-                    "type": "No Application Folder Found"
-                })
+                            # Parse decoded fields from file
+                            extracted = self.parse_scosta_student_record(list(full_file))
+                            
+                            if extracted.get("roll_no") or extracted.get("validity") or sfi == 0x04:
+                                roll = extracted.get("roll_no") or "N/A"
+                                validity = extracted.get("validity") or "N/A"
+                                name = extracted.get("name")
+                                department = extracted.get("department")
+                                dob = extracted.get("dob")
+                                mobile = extracted.get("mobile")
+                                blood_group = extracted.get("blood_group")
+                                gender = extracted.get("gender")
 
-            return blocks, scosta_data
+                                doj = extracted.get("DateofJoining")
+
+                                scosta_data["roll_no"] = roll
+                                scosta_data["validity"] = validity
+                                scosta_data["student_name"] = name
+                                scosta_data["dob"] = dob
+                                scosta_data["doj"] = doj
+                                scosta_data["date_of_joining"] = doj
+                                scosta_data["DateofJoining"] = doj
+                                scosta_data["user_id"] = extracted.get("user_id")
+                                scosta_data["mobile"] = mobile
+                                scosta_data["blood_group"] = blood_group
+                                scosta_data["gender"] = gender
+                                scosta_data["department"] = department
+                                scosta_data["authority"] = extracted.get("authority")
+                                scosta_data["app_status"] = f"Student ID Active: {roll}"
+
+                                # Print formatted details to terminal
+                                print("\n" + "="*58)
+                                print("  >>> STUDENT CARD DETECTED & DECODED! <<<")
+                                print(f"  Roll No / Reg ID:   {roll}")
+                                if name:
+                                    print(f"  Student Name:      {name}")
+                                if department:
+                                    print(f"  Department/Branch: {department}")
+                                print(f"  Valid Thru:        {validity}")
+                                if dob:
+                                    print(f"  Date of Birth:     {dob}")
+                                if doj:
+                                    print(f"  Date of Joining:   {doj}")
+                                if mobile:
+                                    print(f"  Mobile:            {mobile}")
+                                if blood_group:
+                                    print(f"  Blood Group:       {blood_group}")
+                                if gender:
+                                    print(f"  Gender:            {gender}")
+                                print("="*58 + "\n")
+                    except Exception:
+                        pass
+                else:
+                    scosta_data["mf_status"] = f"Error {s1:02X}{s2:02X}"
+            except Exception as e:
+                scosta_data["mf_status"] = f"Err: {e}"
+            return scosta_data
         finally:
             self.apdu_observer.enabled = False
             try:
@@ -765,291 +608,16 @@ class ACR1281Service:
                 pass
 
     def scan_scosta_files(self):
-        """Full SCOSTA File System and ID discovery (MF, DFs, EFs)"""
-        self.scanning = True
-        # Wait up to 3 seconds for loop() to release lock
-        if not self.reader_lock.acquire(timeout=3.0):
-            self.scanning = False
-            return {"status": "error", "message": "Reader is currently busy. Please try again in 1 second."}
-        
-        conn = None
-        try:
-            reader = self.get_acr1281_reader(prefer_contactless=True)
-            if not reader:
-                return {"status": "error", "message": "ACR1281 contactless reader not detected."}
+        """SCOSTA File System Scan - Returns MF (3F00) and EF 4 (Student Profile)"""
+        if self.last_scosta_result:
+            return self.last_scosta_result
 
-            conn = reader.createConnection()
-            connected = False
-            for _ in range(5):
-                try:
-                    conn.connect()
-                    connected = True
-                    break
-                except Exception:
-                    time.sleep(0.2)
+        # Agar cached nahi hai, to direct read karo
+        self.read_contactless_uid(full_preview=True)
+        if self.last_scosta_result:
+            return self.last_scosta_result
 
-            if not connected:
-                # Return cached scan result if card was just tapped recently
-                if self.last_scosta_result:
-                    return self.last_scosta_result
-                if self.last_card_data:
-                    return {
-                        "status": "success",
-                        "uid": self.last_card_data.get("uid"),
-                        "uid_formatted": self.last_card_data.get("uid_formatted"),
-                        "atr": self.last_card_data.get("atr"),
-                        "is_scosta": True,
-                        "card_state": "SmartSCOS Card Active",
-                        "files": [
-                            {
-                                "type": "MF",
-                                "id": "3F00",
-                                "name": "Master File (Root Directory)",
-                                "sw": "9000",
-                                "status": "OPEN",
-                                "status_badge": "success",
-                                "content": ""
-                            }
-                        ]
-                    }
-                return {"status": "error", "message": "Card detect nahi hua. Card ko reader par FLAT rakhein aur dubara click karein."}
-
-            # Enable live APDU tracing for full discovery
-            self.apdu_observer.enabled = True
-            try:
-                conn.addObserver(self.apdu_observer)
-            except Exception:
-                pass
-
-            # 1. ATR and UID
-            atr = toHexString(conn.getATR())
-            data_uid, u1, u2 = conn.transmit([0xFF, 0xCA, 0x00, 0x00, 0x00])
-            uid_hex = ''.join(f'{b:02X}' for b in data_uid) if u1 == 0x90 else "N/A"
-            uid_fmt = ':'.join(f'{b:02X}' for b in data_uid) if u1 == 0x90 else "N/A"
-
-            self.emit_log(f"Starting SCOSTA File System Discovery (UID: {uid_fmt})...", "info")
-
-            discovered = []
-
-            def test_fid(fid_hex, desc, file_type="EF"):
-                b1, b2 = int(fid_hex[:2], 16), int(fid_hex[2:], 16)
-                time.sleep(0.06)
-                try:
-                    # If DF, try P1=0x01, P2=0x0C (slide spec). If EF/MF, use generic P1=0x00, P2=0x00
-                    p1 = 0x01 if file_type == "DF" else 0x00
-                    p2 = 0x0C if file_type == "DF" else 0x00
-                    data, s1, s2 = conn.transmit([0x00, 0xA4, p1, p2, 0x02, b1, b2])
-                    sw = (s1 << 8) | s2
-                    # Fallback to generic P1=0x00 if P1=0x01 returns incorrect parameter or not found
-                    if file_type == "DF" and sw in [0x6A86, 0x6B00]:
-                        data, s1, s2 = conn.transmit([0x00, 0xA4, 0x00, 0x00, 0x02, b1, b2])
-                        sw = (s1 << 8) | s2
-
-                    if sw == 0x9000 or s1 == 0x61:
-                        content = ""
-                        if file_type == "EF":
-                            try:
-                                r_data, r1, r2 = conn.transmit([0x00, 0xB0, 0x00, 0x00, 0x00])
-                                if r1 == 0x6C:
-                                    r_data, r1, r2 = conn.transmit([0x00, 0xB0, 0x00, 0x00, r2])
-                                if (r1 == 0x90 or r1 == 0x61) and r_data:
-                                    content = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in r_data[:32]).strip()
-                            except:
-                                pass
-                        discovered.append({
-                            "type": file_type,
-                            "id": fid_hex,
-                            "name": desc,
-                            "sw": f"{s1:02X}{s2:02X}",
-                            "status": "OPEN",
-                            "status_badge": "success",
-                            "content": content
-                        })
-                    elif sw == 0x6982:
-                        discovered.append({
-                            "type": file_type,
-                            "id": fid_hex,
-                            "name": desc,
-                            "sw": "6982",
-                            "status": "LOCKED (Key Required)",
-                            "status_badge": "warning",
-                            "content": ""
-                        })
-                    elif sw == 0x6985:
-                        discovered.append({
-                            "type": file_type,
-                            "id": fid_hex,
-                            "name": desc,
-                            "sw": "6985",
-                            "status": "CONDITIONS NOT SATISFIED",
-                            "status_badge": "warning",
-                            "content": ""
-                        })
-                    elif sw == 0x6A82:
-                        discovered.append({
-                            "type": file_type,
-                            "id": fid_hex,
-                            "name": desc,
-                            "sw": "6A82",
-                            "status": "NOT CREATED",
-                            "status_badge": "secondary",
-                            "content": ""
-                        })
-                except Exception:
-                    pass
-
-            def test_aid(aid_hex, desc):
-                aid_bytes = [int(aid_hex[i:i+2], 16) for i in range(0, len(aid_hex), 2)]
-                time.sleep(0.08)
-                try:
-                    data, s1, s2 = conn.transmit([0x00, 0xA4, 0x04, 0x00, len(aid_bytes)] + aid_bytes)
-                    sw = (s1 << 8) | s2
-                    if sw == 0x9000 or s1 == 0x61:
-                        discovered.append({
-                            "type": "DF (Application)",
-                            "id": aid_hex,
-                            "name": desc,
-                            "sw": f"{s1:02X}{s2:02X}",
-                            "status": "FOUND & OPEN",
-                            "status_badge": "success",
-                            "content": ""
-                        })
-                    elif sw == 0x6985:
-                        discovered.append({
-                            "type": "DF (Application)",
-                            "id": aid_hex,
-                            "name": desc,
-                            "sw": "6985",
-                            "status": "CONDITIONS NOT SATISFIED",
-                            "status_badge": "warning",
-                            "content": ""
-                        })
-                    elif sw == 0x6A82:
-                        discovered.append({
-                            "type": "DF (Application)",
-                            "id": aid_hex,
-                            "name": desc,
-                            "sw": "6A82",
-                            "status": "NOT CREATED (Blank)",
-                            "status_badge": "secondary",
-                            "content": ""
-                        })
-                except Exception:
-                    pass
-
-            # 1. Master File
-            test_fid("3F00", "Master File (Root Directory)", "MF")
-
-            # 2. Tag 46 Chip Serial Number (SCOSTA Spec Section 7)
-            try:
-                data_46, g1, g2 = conn.transmit([0x00, 0xCA, 0x00, 0x46, 0x00])
-                if g1 == 0x6C:
-                    data_46, g1, g2 = conn.transmit([0x00, 0xCA, 0x00, 0x46, g2])
-                if (g1 == 0x90 or g1 == 0x61) and data_46:
-                    chip_hex = ' '.join(f'{b:02X}' for b in data_46)
-                    discovered.append({
-                        "type": "Data Object (DO)",
-                        "id": "Tag 46",
-                        "name": "Chip Serial Number (Pre-issuing)",
-                        "sw": f"{g1:02X}{g2:02X}",
-                        "status": "READABLE",
-                        "status_badge": "success",
-                        "content": chip_hex
-                    })
-            except:
-                pass
-
-            # 3. System EFs
-            test_fid("2F00", "EF_DIR (ISO Application Directory)")
-            test_fid("2F01", "EF_ATR (Card Service Table)")
-
-            # Direct SFI Probe (for SCOSTA cards with flat EF architecture under MF)
-            for sfi in range(1, 11):
-                try:
-                    p1_sfi = 0x80 | sfi
-                    r_data, r1, r2 = conn.transmit([0x00, 0xB0, p1_sfi, 0x00, 0x00])
-                    if r1 == 0x6C:
-                        r_data, r1, r2 = conn.transmit([0x00, 0xB0, p1_sfi, 0x00, r2])
-                    if (r1 == 0x90 or r1 == 0x61) and r_data:
-                        extracted = self.parse_scosta_student_record(r_data)
-                        content_desc = ' | '.join(extracted.get("all_strings", []))
-                        discovered.append({
-                            "type": "EF (SFI Direct)",
-                            "id": f"SFI 0x{sfi:02X}",
-                            "name": f"Elementary File {sfi} / SFI {sfi}",
-                            "sw": f"{r1:02X}{r2:02X}",
-                            "status": "OPEN",
-                            "status_badge": "success",
-                            "content": content_desc[:64] if content_desc else f"{len(r_data)} bytes read"
-                        })
-                except Exception:
-                    pass
-
-            # 4. SCOSTA AIDs (Registered Application Identifiers)
-            test_aid("A0000001030000", "SCOSTA Official AID (7-byte)")
-            test_aid("A000000103", "SCOSTA Short AID (5-byte)")
-            test_aid("A00000003603", "SCOSTA NIC AID (6-byte)")
-
-            # 5. Dedicated Files (DF) - 2-byte College / Campus / Transport Folders (P1=0x01)
-            dfs = [
-                ("1001", "DF 1001 - College / Student Identity Directory"),
-                ("1002", "DF 1002 - Campus Library Application Directory"),
-                ("1003", "DF 1003 - Mess / Canteen E-Purse Directory"),
-                ("1004", "DF 1004 - Hostel / Door Access Control Directory"),
-                ("7F10", "DF 7F10 - Transport / Driving License Directory"),
-                ("7F20", "DF 7F20 - Vehicle Registration (RC) Directory"),
-                ("DF01", "DF DF01 - Campus General Directory")
-            ]
-            for df_id, desc in dfs:
-                test_fid(df_id, desc, file_type="DF")
-
-            # 6. Elementary Files (EF) - IIT Kanpur SmartID Specification (EF1 to EF8)
-            efs = [
-                ("0001", "EF 0001 - PIN / Password Repository (EF1)"),
-                ("0002", "EF 0002 - Card Serial / Token ID (EF2)"),
-                ("0003", "EF 0003 - Student Roll No / Reg ID (EF3)"),
-                ("0004", "EF 0004 - Department / Institute Details (EF4)"),
-                ("0005", "EF 0005 - Personal Demographics: Name, DOB (EF5)"),
-                ("0006", "EF 0006 - Address / Emergency Contacts (EF6)"),
-                ("0007", "EF 0007 - Semester Validity / Expiry Date (EF7)"),
-                ("0008", "EF 0008 - Card Holder Photo Binary (EF8)"),
-                ("000A", "EF 000A - Photo Alternate / Signature"),
-                ("000C", "EF 000C - Biometrics (Fingerprint Template)"),
-                ("0010", "EF 0010 - Digital Certificate / PKI")
-            ]
-            for fid, desc in efs:
-                test_fid(fid, desc, file_type="EF")
-
-            open_count = sum(1 for d in discovered if d["status"] in ["OPEN", "FOUND & OPEN", "READABLE"])
-            self.emit_log(f"SCOSTA Scan Complete: {open_count} object(s) accessible, MF is Active", "success")
-
-            result = {
-                "status": "success",
-                "uid": uid_hex,
-                "uid_formatted": uid_fmt,
-                "atr": atr,
-                "is_scosta": True,
-                "card_state": "Blank SmartSCOS Card (MF Present, No Application Folders)" if open_count <= 2 else "SCOSTA Initialized Card",
-                "files": discovered
-            }
-            self.last_scosta_result = result
-            return result
-        except Exception as e:
-            self.emit_log(f"SCOSTA scan error: {e}", "error")
-            return {"status": "error", "message": str(e)}
-        finally:
-            self.apdu_observer.enabled = False
-            if conn:
-                try:
-                    conn.deleteObserver(self.apdu_observer)
-                except Exception:
-                    pass
-                try:
-                    conn.disconnect()
-                except Exception:
-                    pass
-            self.reader_lock.release()
-            self.scanning = False
+        return {"status": "error", "message": "Card detect nahi hua. Card ko reader par rakhein."}
 
 
     def loop(self):
@@ -1111,13 +679,6 @@ class ACR1281Service:
 
                 if card.get('is_scosta'):
                     print(f"  Smart Card OS: CDAC SmartSCOS (SCOSTA v1.2b)")
-                    blocks = card.get('blocks', [])
-                    for b in blocks:
-                        lbl = b.get('label')
-                        h = b.get('hex')
-                        asc = b.get('ascii')
-                        print(f"  [{lbl}] {h}  |  {asc}")
-                        self.emit_log(f"{lbl}: {h} | {asc}", "info")
                 print(f"=======================================================\n")
 
                 if self.socketio:
@@ -1129,6 +690,12 @@ class ACR1281Service:
                     self.emit_log("Card removed from reader", "warning")
                     self.last_uid = None
                     self.last_card_data = None
-                if self.socketio:
+                    if self.socketio:
+                        self.socketio.emit('card_deactivated', {
+                            "status": "deactivated",
+                            "message": "Card Deactivated (Lifted)",
+                            "last_userdata": self.last_userdata
+                        })
+                elif self.socketio:
                     self.socketio.emit('waiting_for_card', {})
             time.sleep(0.3)

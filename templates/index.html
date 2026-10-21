@@ -1,353 +1,967 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+
 <head>
-    <title>ACR1281 Card Reader System</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student ID Portal - Smart Card Dashboard</title>
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap"
+        rel="stylesheet">
     <style>
-        *{margin:0;padding:0;box-sizing:border-box}
-        body{font-family:Inter,system-ui,-apple-system,sans-serif;background:#020617;color:#e2e8f0;padding:20px}
-        .top{display:flex;justify-content:space-between;align-items:center;background:#0f172a;padding:15px 20px;border-radius:12px;border:1px solid #1e293b}
-        .status-dot{width:12px;height:12px;border-radius:50%;display:inline-block;margin-right:8px}
-        .connected{background:#22c55e;box-shadow:0 0 10px #22c55e}
-        .disconnected{background:#ef4444}
-        .main{display:grid;grid-template-columns:1fr 420px;gap:20px;margin-top:20px}
-        .reader-area{background:#0f172a;border:2px dashed #334155;border-radius:16px;padding:30px;text-align:center;min-height:500px;display:flex;flex-direction:column;justify-content:center;align-items:center}
-        .pulse{animation:pulse 2s infinite}
-        @keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.05);opacity:.8}}
-        .card-display{background:linear-gradient(135deg,#1e40af,#7c3aed);padding:25px;border-radius:16px;width:100%;max-width:400px;color:white;box-shadow:0 20px 40px rgba(0,0,0,.4);text-align:left}
-        .card-display h2{font-size:28px;letter-spacing:2px;margin:10px 0}
-        .card-display .label{font-size:11px;opacity:.7;text-transform:uppercase;letter-spacing:1px}
-        .card-display .value{font-family:monospace;font-size:14px;margin-bottom:12px;word-break:break-all}
-        
-        /* Terminal Log Styling */
-        .log-panel{display:flex;flex-direction:column}
-        .log-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-        #log{background:#090d16;border:1px solid #1e293b;border-radius:12px;padding:12px;height:450px;overflow-y:auto;font-family:'Consolas','Courier New',monospace;font-size:12px;display:flex;flex-direction:column-reverse;gap:6px}
-        .log-entry{padding:8px 10px;border-radius:6px;background:#0f172a;border-left:3px solid #64748b;line-height:1.4;animation:slideIn .2s ease-out;word-break:break-all}
-        .log-entry.success{border-left-color:#22c55e;background:rgba(34,197,94,0.08)}
-        .log-entry.info{border-left-color:#38bdf8;background:rgba(56,189,248,0.08)}
-        .log-entry.warning{border-left-color:#f59e0b;background:rgba(245,158,11,0.08)}
-        .log-entry.error{border-left-color:#ef4444;background:rgba(239,68,68,0.08)}
-        
-        .log-time{color:#64748b;margin-right:6px;font-size:11px}
-        .log-badge{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;margin-right:6px;text-transform:uppercase}
-        .badge-success{background:rgba(34,197,94,0.2);color:#22c55e}
-        .badge-info{background:rgba(56,189,248,0.2);color:#38bdf8}
-        .badge-warning{background:rgba(245,158,11,0.2);color:#f59e0b}
-        .badge-error{background:rgba(239,68,68,0.2);color:#ef4444}
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-        button{background:#3b82f6;color:white;border:none;padding:10px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin:5px;transition:0.2s}
-        button:hover{background:#2563eb}
-        .acr-badge{background:#22c55e;color:black;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:bold}
-        .log-actions{display:flex;gap:10px;margin-top:10px}
-        .log-actions button{flex:1;margin:0;background:#1e293b}
-        .log-actions button:hover{background:#334155}
+        body {
+            font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+            background-color: #f1f5f9;
+            color: #0f172a;
+            padding: 24px;
+            min-height: 100vh;
+        }
 
-        /* Sector Dump Styles */
-        .sector-box{background:#0b1120;border:1px solid #1e293b;border-radius:10px;padding:12px;margin-bottom:8px}
-        .sector-header{font-size:13px;font-weight:bold;color:#38bdf8;display:flex;justify-content:space-between;margin-bottom:8px}
-        .block-table{width:100%;border-collapse:collapse;font-size:11px}
-        .block-table th{text-align:left;color:#64748b;padding:4px 8px;border-bottom:1px solid #1e293b}
-        .block-table td{padding:5px 8px;border-bottom:1px solid #0f172a}
-        .hex-data{color:#a5f3fc;letter-spacing:1px}
-        .ascii-data{color:#fde047;background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:4px}
-        .tag-mfg{color:#c084fc}
-        .tag-trailer{color:#f43f5e}
-        .tag-data{color:#4ade80}
+        .container {
+            max-width: 1180px;
+            margin: 0 auto;
+        }
+
+        /* Top Reader Status Bar (From User Image 2) */
+        .reader-bar {
+            background-color: #0a0f1d;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .reader-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            transition: all 0.3s ease;
+        }
+
+        .status-dot.connected {
+            background: #22c55e;
+            box-shadow: 0 0 10px #22c55e;
+        }
+
+        .status-dot.disconnected {
+            background: #ef4444;
+            box-shadow: 0 0 10px #ef4444;
+        }
+
+        .reader-name {
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.2px;
+        }
+
+        .reader-badge {
+            background-color: #10b981;
+            color: #022c22;
+            font-size: 11px;
+            font-weight: 800;
+            padding: 3px 10px;
+            border-radius: 6px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .reader-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #22c55e;
+        }
+
+        .reader-right.card-inactive {
+            color: #ef4444;
+        }
+
+        /* Dashboard Layout Grid (From User Image 1) */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1.7fr 1fr;
+            gap: 24px;
+            align-items: start;
+        }
+
+        @media (max-width: 900px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Common Card Style */
+        .card-box {
+            background: #ffffff;
+            border-radius: 20px;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 4px 18px rgba(15, 23, 42, 0.04);
+            overflow: hidden;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        /* Hero Profile Card */
+        .hero-banner {
+            display: none;
+        }
+
+        .hero-body {
+            padding: 28px;
+            position: relative;
+        }
+
+        .hero-header-row {
+            display: flex;
+            align-items: center;
+            margin-top: 0;
+            margin-bottom: 16px;
+            gap: 18px;
+        }
+
+        .avatar-initials {
+            width: 88px;
+            height: 88px;
+            background-color: #ffffff;
+            border: 3px solid #e2e8f0;
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 26px;
+            font-weight: 800;
+            color: #0f172a;
+            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+            flex-shrink: 0;
+            transition: all 0.3s ease;
+        }
+
+        .hero-title-area {
+            flex-grow: 1;
+            padding-bottom: 4px;
+        }
+
+        .name-badge-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .student-name {
+            font-size: 22px;
+            font-weight: 800;
+            color: #0f172a;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .verified-icon {
+            width: 18px;
+            height: 18px;
+            fill: #10b981;
+            display: inline-block;
+        }
+
+        .student-degree {
+            font-size: 14px;
+            font-weight: 500;
+            color: #64748b;
+            margin-top: 2px;
+        }
+
+        /* Activation Status Badge */
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            font-weight: 700;
+            padding: 5px 12px;
+            border-radius: 9999px;
+            transition: all 0.3s ease;
+        }
+
+        .status-pill.active {
+            background-color: #dcfce7;
+            color: #15803d;
+            border: 1px solid #bbf7d0;
+        }
+
+        .status-pill.deactivated {
+            background-color: #fee2e2;
+            color: #b91c1c;
+            border: 1px solid #fecaca;
+        }
+
+        .status-pill.waiting {
+            background-color: #f1f5f9;
+            color: #64748b;
+            border: 1px solid #cbd5e1;
+        }
+
+        .status-pill .indicator-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background-color: currentColor;
+        }
+
+        .hero-bio {
+            font-size: 13px;
+            color: #64748b;
+            line-height: 1.6;
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid #f1f5f9;
+        }
+
+        /* Personal Information Card */
+        .info-card {
+            padding: 26px 28px;
+            margin-top: 24px;
+        }
+
+        .card-heading {
+            font-size: 17px;
+            font-weight: 800;
+            color: #0f172a;
+        }
+
+        .card-subheading {
+            font-size: 13px;
+            color: #64748b;
+            margin-top: 2px;
+            margin-bottom: 22px;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px 24px;
+        }
+
+        .info-item {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .info-icon-box {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            background-color: #f1f5f9;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            color: #64748b;
+        }
+
+        .info-icon-box.phone {
+            background-color: #f8fafc;
+            color: #475569;
+            border: 1px solid #e2e8f0;
+        }
+
+        .info-icon-box.calendar {
+            background-color: #f8fafc;
+            color: #475569;
+            border: 1px solid #e2e8f0;
+        }
+
+        .info-icon-box.shield {
+            background-color: #f0fdf4;
+            color: #16a34a;
+            border: 1px solid #dcfce7;
+        }
+
+        .info-icon-box.gender {
+            background-color: #f8fafc;
+            color: #475569;
+            border: 1px solid #e2e8f0;
+        }
+
+        .info-meta {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .info-label {
+            font-size: 10px;
+            font-weight: 700;
+            color: #94a3b8;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+        }
+
+        .info-val {
+            font-size: 14px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-top: 2px;
+        }
+
+        /* Right Column Cards */
+        .right-column {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .status-card {
+            padding: 22px 24px;
+        }
+
+        .status-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .badge-text-status {
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .badge-text-status.valid {
+            color: #10b981;
+        }
+
+        .badge-text-status.invalid {
+            color: #ef4444;
+        }
+
+        .validity-highlight-box {
+            background-color: #ecfdf5;
+            border: 1px solid #bbf7d0;
+            border-radius: 14px;
+            padding: 14px 18px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .validity-highlight-box.deactivated {
+            background-color: #fef2f2;
+            border-color: #fecaca;
+        }
+
+        .validity-icon-circle {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background-color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #16a34a;
+            box-shadow: 0 2px 6px rgba(22, 163, 74, 0.15);
+            flex-shrink: 0;
+        }
+
+        .validity-highlight-box.deactivated .validity-icon-circle {
+            color: #dc2626;
+            box-shadow: 0 2px 6px rgba(220, 38, 38, 0.15);
+        }
+
+        .validity-details {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .validity-tagline {
+            font-size: 10px;
+            font-weight: 800;
+            color: #16a34a;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+        }
+
+        .validity-highlight-box.deactivated .validity-tagline {
+            color: #dc2626;
+        }
+
+        .validity-date {
+            font-size: 15px;
+            font-weight: 800;
+            color: #064e3b;
+            margin-top: 1px;
+        }
+
+        .validity-highlight-box.deactivated .validity-date {
+            color: #7f1d1d;
+        }
+
+        .status-footer-note {
+            font-size: 12px;
+            color: #64748b;
+            margin-top: 12px;
+            line-height: 1.5;
+        }
+
+        /* Academic Details Card */
+        .academic-card {
+            padding: 22px 24px;
+        }
+
+        .academic-dept-row {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-top: 16px;
+        }
+
+        .phd-badge {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            color: #0f172a;
+            font-size: 12px;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .academic-dept-meta {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .dept-name {
+            font-size: 14px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+
+        .dept-caption {
+            font-size: 12px;
+            color: #94a3b8;
+            margin-top: 1px;
+        }
+
+        .authority-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 18px;
+            padding-top: 16px;
+            border-top: 1px solid #f1f5f9;
+        }
+
+        .authority-icon {
+            color: #94a3b8;
+            flex-shrink: 0;
+        }
+
+        /* Account Identifiers Card */
+        .account-card {
+            padding: 22px 24px;
+        }
+
+        .ident-row {
+            margin-top: 16px;
+        }
+
+        .ident-row:not(:last-child) {
+            margin-bottom: 14px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .ident-val {
+            font-size: 14px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-top: 4px;
+        }
+
+        .ident-val.mono {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            font-weight: 600;
+            color: #334155;
+        }
+
+        /* Waiting Screen Overlay (Shown before first tap) */
+        .waiting-overlay {
+            background: #ffffff;
+            border-radius: 20px;
+            border: 2px dashed #cbd5e1;
+            padding: 70px 30px;
+            text-align: center;
+            display: block;
+            margin-bottom: 24px;
+        }
+
+        .pulse-icon {
+            animation: pulse-ring 2s infinite ease-in-out;
+            display: inline-block;
+        }
+
+        @keyframes pulse-ring {
+
+            0%,
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            50% {
+                transform: scale(1.08);
+                opacity: 0.8;
+            }
+        }
     </style>
 </head>
-<body>
-    <div class="top">
-        <div>
-            <span id="dot" class="status-dot disconnected"></span>
-            <b id="device">Detecting ACR1281...</b> 
-            <span id="badge"></span>
-        </div>
-        <div><small id="readerList"></small></div>
-    </div>
 
-    <div class="main">
-        <div class="reader-area" id="readerArea">
-            <div id="waiting">
-                <div style="font-size:60px" class="pulse">📡</div>
-                <h2 style="margin:20px 0">Tap Card on ACR1281</h2>
-                <p style="opacity:.6">Contactless (PICC) Antenna</p>
-                <div style="margin-top:20px">
-                    <button onclick="socket.emit('read_now')">🔍 Read Now</button>
-                    <button onclick="simulate()">🎲 Simulate</button>
-                    <button onclick="requestCardDump()" style="background:#4f46e5">💾 Dump Memory</button>
-                </div>
+<body>
+    <div class="container">
+
+        <!-- Top Reader Status Bar -->
+        <div class="reader-bar">
+            <div class="reader-left">
+                <span id="readerDot" class="status-dot connected"></span>
+                <span id="readerBadge" class="reader-badge">ACR1281 DETECTED</span>
             </div>
-            <div id="cardView" style="display:none">
-                <div class="card-display">
-                    <div class="label">ACR1281 - <span id="iface"></span></div>
-                    <div class="label" style="margin-top:10px">Card UID (Hex)</div>
-                    <h2 id="uid"></h2>
-                    <div class="label">Decimal</div>
-                    <div class="value" id="uidDec"></div>
-                    <div class="label">Type</div>
-                    <div class="value" id="ctype"></div>
-                    <div class="label">ATR</div>
-                    <div class="value" style="font-size:10px" id="atr"></div>
-                    <div class="label">Timestamp</div>
-                    <div id="blockDataBox" style="margin-top:10px;background:rgba(0,0,0,.35);padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.1)">
-                        <div class="label" style="color:#38bdf8;font-weight:700">Memory Preview (Blocks)</div>
-                        <div id="blocksList" style="display:flex;flex-direction:column;gap:5px;font-family:monospace;font-size:11px;margin-top:6px"></div>
+            <div id="readerMode" class="reader-right">
+                <span style="font-size: 9px; line-height: 0;">●</span>
+                <span id="readerModeText">Dual Mode (PICC/ICC) Ready</span>
+            </div>
+        </div>
+
+        <!-- Waiting Card Placeholder (Before any card is tapped) -->
+        <div id="waitingPlaceholder" class="waiting-overlay">
+            <div style="font-size: 54px;" class="pulse-icon">💳</div>
+            <h2 style="font-size: 22px; font-weight: 800; color: #0f172a; margin-top: 18px;">Waiting for Smart Card Tap
+            </h2>
+            <p style="color: #64748b; font-size: 14px; margin-top: 8px;">Please tap your SCOSTA student card on the
+                ACR1281 reader</p>
+        </div>
+
+        <!-- Main Student Dashboard Grid (Rendered dynamically from card response) -->
+        <div id="studentDashboard" class="dashboard-grid" style="display: none;">
+
+            <!-- Left Column: Hero & Personal Info -->
+            <div class="left-column">
+
+                <!-- Hero Profile Card -->
+                <div class="card-box hero-card">
+                    <div class="hero-body">
+                        <div class="hero-header-row">
+                            <div id="avatarInitials" class="avatar-initials">--</div>
+                            <div class="hero-title-area">
+                                <div class="name-badge-row">
+                                    <div class="student-name">
+                                        <span id="studentName">--</span>
+                                        <svg class="verified-icon" viewBox="0 0 24 24">
+                                            <path
+                                                d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                                        </svg>
+                                    </div>
+                                </div>
+                                <div id="studentDegree" class="student-degree">--</div>
+                            </div>
+                        </div>
+
+                        <p id="heroBio" class="hero-bio"></p>
                     </div>
                 </div>
-                <div style="display:flex;gap:10px;margin-top:16px;width:100%;max-width:400px">
-                    <button onclick="resetView()" style="flex:1;background:#1e293b;margin:0">← Another Card</button>
-                    <button id="scostaBtn" onclick="requestScostaScan()" style="flex:1.2;background:#059669;margin:0">🔍 Scan SCOSTA Files</button>
+
+                <!-- Personal Information Card -->
+                <div class="card-box info-card">
+                    <h3 class="card-heading">Personal information</h3>
+                    <p class="card-subheading">Verified identity and contact details.</p>
+
+                    <div class="info-grid">
+                        <!-- Mobile Number -->
+                        <div class="info-item">
+                            <div class="info-icon-box phone">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path
+                                        d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z">
+                                    </path>
+                                </svg>
+                            </div>
+                            <div class="info-meta">
+                                <span class="info-label">MOBILE NUMBER</span>
+                                <span id="mobileNumber" class="info-val">--</span>
+                            </div>
+                        </div>
+
+                        <!-- Date of Birth -->
+                        <div class="info-item">
+                            <div class="info-icon-box calendar">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                                    <line x1="16" y1="2" x2="16" y2="6"></line>
+                                    <line x1="8" y1="2" x2="8" y2="6"></line>
+                                    <line x1="3" y1="10" x2="21" y2="10"></line>
+                                </svg>
+                            </div>
+                            <div class="info-meta">
+                                <span class="info-label">DATE OF BIRTH</span>
+                                <span id="dateOfBirth" class="info-val">--</span>
+                            </div>
+                        </div>
+
+                        <!-- Blood Group -->
+                        <div class="info-item">
+                            <div class="info-icon-box shield">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                                </svg>
+                            </div>
+                            <div class="info-meta">
+                                <span class="info-label">BLOOD GROUP</span>
+                                <span id="bloodGroup" class="info-val">--</span>
+                            </div>
+                        </div>
+
+                        <!-- Gender -->
+                        <div class="info-item">
+                            <div class="info-icon-box gender">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="12" cy="12" r="4"></circle>
+                                    <path d="M12 2v2"></path>
+                                    <path d="M12 20v2"></path>
+                                    <path d="m4.93 4.93 1.41 1.41"></path>
+                                    <path d="m17.66 17.66 1.41 1.41"></path>
+                                    <path d="M2 12h2"></path>
+                                    <path d="M20 12h2"></path>
+                                    <path d="m6.34 17.66-1.41 1.41"></path>
+                                    <path d="m19.07 4.93-1.41 1.41"></path>
+                                </svg>
+                            </div>
+                            <div class="info-meta">
+                                <span class="info-label">GENDER</span>
+                                <span id="genderVal" class="info-val">--</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
+
             </div>
+
+            <!-- Right Column: Status & Academic Identifiers -->
+            <div class="right-column">
+
+                <!-- Student ID Status -->
+                <div class="card-box status-card">
+                    <div class="status-header">
+                        <h3 class="card-heading">Student ID status</h3>
+                        <span id="badgeTextStatus" class="badge-text-status valid">Valid</span>
+                    </div>
+
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                        <!-- Date of Joining Box -->
+                        <div id="dojBox" class="validity-highlight-box" style="background-color: #f8fafc; border-color: #e2e8f0;">
+                            <div class="validity-icon-circle" style="color: #475569; background: #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,0.06);">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                                    <line x1="16" y1="2" x2="16" y2="6"></line>
+                                    <line x1="8" y1="2" x2="8" y2="6"></line>
+                                    <line x1="3" y1="10" x2="21" y2="10"></line>
+                                </svg>
+                            </div>
+                            <div class="validity-details">
+                                <span class="validity-tagline" style="color: #64748b;">DATE OF JOINING</span>
+                                <span id="dojDate" class="validity-date" style="color: #0f172a;">--</span>
+                            </div>
+                        </div>
+
+                        <!-- Validity Box -->
+                        <div id="validityBox" class="validity-highlight-box">
+                            <div class="validity-icon-circle">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                                    <polyline points="9 11 12 14 15 11"></polyline>
+                                </svg>
+                            </div>
+                            <div class="validity-details">
+                                <span id="validityTagline" class="validity-tagline">VALID UNTIL</span>
+                                <span id="validityDate" class="validity-date">--</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <p id="statusFooterNote" class="status-footer-note">
+                        Your student record is active and verified.
+                    </p>
+                </div>
+
+                <!-- Academic Details -->
+                <div class="card-box academic-card">
+                    <h3 class="card-heading">Role details</h3>
+
+                    <div class="academic-dept-row">
+                        <div id="phdBadge" class="phd-badge">--</div>
+                        <div class="academic-dept-meta">
+                            <span id="academicDept" class="dept-name">--</span>
+                            <span class="dept-caption">Department</span>
+                        </div>
+                    </div>
+
+                    <div class="authority-row">
+                        <svg class="authority-icon" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                        </svg>
+                        <div class="info-meta">
+                            <span class="info-label">AUTHORITY</span>
+                            <span id="authorityName" class="info-val" style="font-size: 13px;">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Account Identifiers -->
+                <div class="card-box account-card">
+                    <h3 class="card-heading">Account identifiers</h3>
+
+                    <div class="ident-row">
+                        <span class="info-label">ID NUMBER</span>
+                        <div id="rollNumber" class="ident-val">--</div>
+                    </div>
+
+                    <div class="ident-row">
+                        <span class="info-label">USER ID</span>
+                        <div id="userId" class="ident-val mono">--</div>
+                    </div>
+                </div>
+
+            </div>
+
         </div>
-        
-        <div class="log-panel">
-            <div class="log-header">
-                <h3 style="font-size:16px;display:flex;align-items:center;gap:6px">📜 Live Reader Logs</h3>
-                <span id="logCount" style="font-size:11px;color:#94a3b8;background:#1e293b;padding:2px 8px;border-radius:10px">0 events</span>
-            </div>
-            <div id="log"></div>
-            <div class="log-actions">
-                <button onclick="clearLog()">Clear Log</button>
-                <button onclick="copyLogs()">📋 Copy Logs</button>
-            </div>
-        </div>
+
     </div>
 
-    <!-- SCOSTA File System Modal -->
-    <div id="scostaModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);backdrop-filter:blur(6px);z-index:999;align-items:center;justify-content:center;padding:20px">
-        <div style="background:#0f172a;border:1px solid #334155;border-radius:16px;width:100%;max-width:960px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 25px 50px rgba(0,0,0,0.6)">
-            <div style="padding:16px 24px;border-bottom:1px solid #1e293b;display:flex;justify-content:space-between;align-items:center">
-                <div>
-                    <h3 style="font-size:18px;display:flex;align-items:center;gap:8px">🔍 SCOSTA / SmartSCOS File System <span id="scostaUidBadge" style="font-size:13px;background:#1e293b;padding:3px 10px;border-radius:6px;font-family:monospace;color:#38bdf8"></span></h3>
-                    <small id="scostaSummary" style="color:#10b981;font-weight:600">ISO 7816-4 & SCOSTA v1.2b Standard</small>
-                </div>
-                <div style="display:flex;gap:8px;align-items:center">
-                    <button onclick="closeScostaModal()" style="background:#ef4444;padding:8px 12px;font-size:12px;margin:0">✕ Close</button>
-                </div>
-            </div>
-            <div id="scostaBody" style="padding:20px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;font-family:sans-serif">
-                <div id="scostaLoading" style="text-align:center;padding:40px">
-                    <div style="font-size:36px" class="pulse">⏳</div>
-                    <p style="margin-top:12px;color:#94a3b8">Scanning Smart Card File System (MF 3F00, Tag 46, EFs)... Please hold card on reader.</p>
-                </div>
-                <div id="scostaContent" style="display:none">
-                    <div id="scostaCardState" style="padding:10px 14px;border-radius:8px;background:#1e293b;margin-bottom:14px;font-weight:600;color:#38bdf8"></div>
-                    <table style="width:100%;border-collapse:collapse;font-size:13px;text-align:left">
-                        <thead>
-                            <tr style="border-bottom:1px solid #334155;color:#94a3b8">
-                                <th style="padding:8px">Type</th>
-                                <th style="padding:8px">File ID</th>
-                                <th style="padding:8px">Description</th>
-                                <th style="padding:8px">SW</th>
-                                <th style="padding:8px">Status</th>
-                                <th style="padding:8px">Content / Data</th>
-                            </tr>
-                        </thead>
-                        <tbody id="scostaTableBody"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
+    <script>
+        const socket = io();
 
-<script>
-    const socket = io();
-    const dot = document.getElementById('dot');
-    const device = document.getElementById('device');
-    const badge = document.getElementById('badge');
-    const logBox = document.getElementById('log');
-    
-    // Status update
-    socket.on('reader_status', d => {
-        dot.className = 'status-dot ' + (d.connected ? 'connected' : 'disconnected');
-        device.innerText = d.device;
-        const readerListEl = document.getElementById('readerList');
-        if (d.is_acr1281) {
-            badge.innerHTML = '<span class="acr-badge">ACR1281 DETECTED</span>';
-            readerListEl.innerHTML = '<span style="color:#22c55e;font-size:12px;font-weight:600">● Dual Mode (PICC/ICC) Ready</span>';
-        } else {
-            badge.innerHTML = '<span style="background:#ef4444;color:white;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:bold">DISCONNECTED</span>';
-            readerListEl.innerHTML = '<span style="color:#ef4444;font-size:12px">⚠️ Please connect ACR1281 Reader</span>';
-        }
-    });
-
-    // Add log entry to UI
-    function renderLogEntry(data, prepend = true) {
-        const level = data.level || 'info';
-        const badgeClass = 'badge-' + level;
-        const div = document.createElement('div');
-        div.className = 'log-entry ' + level;
-        div.innerHTML = `<span class="log-time">${data.timestamp}</span><span class="log-badge ${badgeClass}">${level}</span><span>${data.message}</span>`;
-        if (prepend) {
-            logBox.prepend(div);
-        } else {
-            logBox.appendChild(div);
-        }
-        updateLogCount();
-    }
-
-    // Stream single new log event
-    socket.on('log_event', entry => {
-        renderLogEntry(entry, true);
-    });
-
-    // Receive full history on load / refresh
-    socket.on('log_history', history => {
-        logBox.innerHTML = '';
-        if (Array.isArray(history)) {
-            history.forEach(entry => renderLogEntry(entry, true));
-        }
-    });
-
-    // Card Detected UI
-    socket.on('card_detected', data => {
-        document.getElementById('waiting').style.display = 'none';
-        document.getElementById('cardView').style.display = 'block';
-        document.getElementById('iface').innerText = data.interface;
-        document.getElementById('uid').innerText = data.uid_formatted || data.uid;
-        document.getElementById('uidDec').innerText = data.uid_decimal || data.uid;
-        document.getElementById('ctype').innerText = data.type;
-        document.getElementById('atr').innerText = data.atr;
-        document.getElementById('time').innerText = data.timestamp;
-
-        const dumpBtn = document.getElementById('dumpBtn');
-        const scostaBtn = document.getElementById('scostaBtn');
-        const previewLabel = document.querySelector('#blockDataBox .label');
-
-        if (data.is_scosta) {
-            if (dumpBtn) dumpBtn.style.display = 'none';
-            if (scostaBtn) scostaBtn.style.display = 'block';
-            if (previewLabel) previewLabel.innerText = 'SCOSTA File System Preview';
-        } else {
-            if (dumpBtn) dumpBtn.style.display = 'block';
-            if (scostaBtn) scostaBtn.style.display = 'none';
-            if (previewLabel) previewLabel.innerText = 'Memory Preview (Blocks)';
-        }
-
-        const blocksList = document.getElementById('blocksList');
-        blocksList.innerHTML = '';
-        if(data.blocks && data.blocks.length > 0){
-            data.blocks.forEach(b => {
-                const item = document.createElement('div');
-                item.style.padding = '4px 6px';
-                item.style.borderRadius = '4px';
-                item.style.background = 'rgba(15, 23, 42, 0.7)';
-                if(b.status === 'success'){
-                    item.innerHTML = `<span style="color:#94a3b8">${b.label}:</span> <span style="color:#a5f3fc">${b.hex}</span> <span style="color:#fde047;margin-left:4px">"${escapeHtml(b.ascii)}"</span>`;
-                } else if(b.status === 'locked'){
-                    item.innerHTML = `<span style="color:#94a3b8">${b.label}:</span> <span style="color:#f59e0b">⚠️ [${escapeHtml(b.ascii || 'LOCKED')}]</span>`;
-                } else {
-                    item.innerHTML = `<span style="color:#94a3b8">${b.label}:</span> <span style="color:#ef4444">🔒 [LOCKED / PROTECTED]</span>`;
+        // Helper: Convert Date '08/04/2000' -> '08 April 2000'
+        function formatReadableDate(dateStr) {
+            if (!dateStr) return 'N/A';
+            const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+            const parts = dateStr.split('/');
+            if (parts.length === 3) {
+                const day = parts[0];
+                const monthIdx = parseInt(parts[1], 10) - 1;
+                const year = parts[2];
+                if (monthIdx >= 0 && monthIdx < 12) {
+                    return `${day} ${months[monthIdx]} ${year}`;
                 }
-                blocksList.appendChild(item);
-            });
-        }
-    });
-
-    function requestScostaScan() {
-        const modal = document.getElementById('scostaModal');
-        modal.style.display = 'flex';
-        document.getElementById('scostaLoading').style.display = 'block';
-        document.getElementById('scostaContent').style.display = 'none';
-        document.getElementById('scostaUidBadge').innerText = document.getElementById('uid').innerText;
-        socket.emit('scan_scosta');
-    }
-
-    function closeScostaModal() {
-        document.getElementById('scostaModal').style.display = 'none';
-    }
-
-    socket.on('scosta_scan_result', result => {
-        document.getElementById('scostaLoading').style.display = 'none';
-        const content = document.getElementById('scostaContent');
-        content.style.display = 'block';
-        if (result.status === 'error') {
-            document.getElementById('scostaCardState').innerHTML = `<span style="color:#ef4444">⚠️ Error: ${escapeHtml(result.message)}</span>`;
-            return;
+            }
+            return dateStr;
         }
 
-        document.getElementById('scostaCardState').innerHTML = `<span>Card Status:</span> <span style="color:#34d399">${escapeHtml(result.card_state)}</span>`;
-        const tbody = document.getElementById('scostaTableBody');
-        tbody.innerHTML = '';
-        if (result.files && result.files.length > 0) {
-            result.files.forEach(f => {
-                const tr = document.createElement('tr');
-                tr.style.borderBottom = '1px solid #1e293b';
-                const badgeColor = f.status_badge === 'success' ? '#10b981' : (f.status_badge === 'warning' ? '#f59e0b' : '#64748b');
-                tr.innerHTML = `
-                    <td style="padding:8px;color:#94a3b8">${escapeHtml(f.type)}</td>
-                    <td style="padding:8px;font-family:monospace;font-weight:600;color:#38bdf8">${escapeHtml(f.id)}</td>
-                    <td style="padding:8px">${escapeHtml(f.name)}</td>
-                    <td style="padding:8px;font-family:monospace">${escapeHtml(f.sw)}</td>
-                    <td style="padding:8px"><span style="background:${badgeColor}22;color:${badgeColor};padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">${escapeHtml(f.status)}</span></td>
-                    <td style="padding:8px;font-family:monospace;color:#e2e8f0">${escapeHtml(f.content || '-')}</td>
-                `;
-                tbody.appendChild(tr);
-            });
+        // Helper: Format Phone "+91 63860 86294"
+        function formatPhone(phone) {
+            if (!phone) return 'N/A';
+            phone = phone.trim();
+            if (phone.length === 10) {
+                return `+91 ${phone.slice(0, 5)} ${phone.slice(5)}`;
+            }
+            if (phone.startsWith('91') && phone.length === 12) {
+                return `+91 ${phone.slice(2, 7)} ${phone.slice(7)}`;
+            }
+            return phone;
         }
-    });
-    
-    socket.on('no_card', d => {
-        alert(d.message);
-    });
 
-    function escapeHtml(text) {
-        return text ? text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") : '';
-    }
-    
-    function resetView(){
-        document.getElementById('waiting').style.display = 'block';
-        document.getElementById('cardView').style.display = 'none';
-    }
+        // Helper: Compute Initials (e.g., "Khushi Gupta" -> "KG")
+        function getInitials(name) {
+            if (!name) return 'ID';
+            const parts = name.trim().split(/\s+/);
+            if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+            return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+        }
 
-    function clearLog(){
-        logBox.innerHTML = '';
-        updateLogCount();
-    }
+        // Helper: Degree abbreviation
+        function getDegreeBadge(dept) {
+            if (!dept) return 'ID';
+            const upper = dept.toUpperCase();
+            if (upper.includes('PHILOSOPHY') || upper.includes('PHD')) return 'PhD';
+            if (upper.includes('TECHNOLOGY') || upper.includes('B.TECH')) return 'B.Tech';
+            if (upper.includes('SCIENCE') || upper.includes('M.SC')) return 'M.Sc';
+            if (upper.includes('MASTER')) return 'M.Tech';
+            return dept.slice(0, 3).toUpperCase();
+        }
 
-    function copyLogs(){
-        const text = logBox.innerText;
-        if (!text) return alert("Log is empty!");
-        navigator.clipboard.writeText(text).then(()=>{
-            alert("Logs copied to clipboard!");
+        // Populate Dashboard UI with Data
+        function updateDashboard(user, isActivated = true) {
+            if (!user) return;
+
+            document.getElementById('waitingPlaceholder').style.display = 'none';
+            document.getElementById('studentDashboard').style.display = 'grid';
+
+            // Format Name in Title Case
+            const rawName = user.name || 'Student Name';
+            const formattedName = rawName.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+            document.getElementById('studentName').innerText = formattedName;
+            document.getElementById('avatarInitials').innerText = getInitials(rawName);
+
+            // Degree / Department
+            const dept = user.department || 'Academic Department';
+            document.getElementById('studentDegree').innerText = dept;
+            document.getElementById('academicDept').innerText = dept;
+            document.getElementById('phdBadge').innerText = getDegreeBadge(dept);
+
+            // Bio
+            const roll = user.roll_no || 'Registered Student';
+            const auth = user.authority || 'Office of Student Affairs';
+            document.getElementById('heroBio').innerText =
+                `${dept} registered under roll number ${roll}. This profile contains verified student information maintained by the ${auth}.`;
+
+            // Personal Info
+            document.getElementById('mobileNumber').innerText = formatPhone(user.mobile);
+            document.getElementById('dateOfBirth').innerText = formatReadableDate(user.dob);
+            document.getElementById('bloodGroup').innerText = user.blood_group || 'N/A';
+            document.getElementById('genderVal').innerText = user.gender || 'N/A';
+
+            // Status Card
+            const doj = user.doj || user.date_of_joining || user.DateofJoining;
+            const dojElem = document.getElementById('dojDate');
+            if (dojElem) {
+                dojElem.innerText = doj ? formatReadableDate(doj) : '--';
+            }
+            document.getElementById('validityDate').innerText = formatReadableDate(user.validity);
+            document.getElementById('authorityName').innerText = auth;
+
+            // Account Identifiers
+            document.getElementById('rollNumber').innerText = roll;
+            document.getElementById('userId').innerText = user.user_id || roll.toLowerCase();
+
+            // Card Activated vs Deactivated UI State
+            setCardActiveState(isActivated);
+        }
+
+        // Manage Card Activation / Indicators
+        function setCardActiveState(isActivated) {
+            const badgeTextStatus = document.getElementById('badgeTextStatus');
+            const validityBox = document.getElementById('validityBox');
+            const validityTagline = document.getElementById('validityTagline');
+            const statusFooterNote = document.getElementById('statusFooterNote');
+            const readerMode = document.getElementById('readerMode');
+            const readerModeText = document.getElementById('readerModeText');
+
+            if (badgeTextStatus) {
+                badgeTextStatus.className = 'badge-text-status valid';
+                badgeTextStatus.innerText = 'Valid';
+            }
+            if (validityBox) validityBox.className = 'validity-highlight-box';
+            if (validityTagline) validityTagline.innerText = 'VALID UNTIL';
+            if (statusFooterNote) statusFooterNote.innerText = 'Your student record is active and verified.';
+            if (readerMode) readerMode.className = 'reader-right';
+            if (readerModeText) readerModeText.innerText = 'Dual Mode (PICC/ICC) Ready';
+        }
+
+        // Socket Event: Card Detected & Activated
+        socket.on('card_detected', data => {
+            const user = data.userdata || (data.scosta_info ? {
+                name: data.scosta_info.student_name || data.scosta_info.name,
+                roll_no: data.scosta_info.roll_no,
+                department: data.scosta_info.department,
+                validity: data.scosta_info.validity,
+                dob: data.scosta_info.dob,
+                doj: data.scosta_info.doj || data.scosta_info.date_of_joining || data.scosta_info.DateofJoining,
+                date_of_joining: data.scosta_info.doj || data.scosta_info.date_of_joining || data.scosta_info.DateofJoining,
+                mobile: data.scosta_info.mobile,
+                blood_group: data.scosta_info.blood_group,
+                gender: data.scosta_info.gender,
+                user_id: data.scosta_info.user_id,
+                authority: data.scosta_info.authority
+            } : null);
+
+            if (user) {
+                updateDashboard(user, true);
+            }
         });
-    }
 
-    function updateLogCount(){
-        document.getElementById('logCount').innerText = `${logBox.children.length} events`;
-    }
+        // Socket Event: Card Lifted & Deactivated
+        socket.on('card_deactivated', data => {
+            const user = data.last_userdata ? data.last_userdata.userdata : null;
+            if (user) {
+                updateDashboard(user, false);
+            } else {
+                setCardActiveState(false);
+            }
+        });
 
-    function simulate(){
-        const fake = {
-            interface: 'Contactless (PICC)',
-            uid: '088AFD3D',
-            uid_formatted: '08:8A:FD:3D',
-            uid_decimal: '143326525',
-            type: 'SCOSTA / SmartSCOS (ISO 14443-4)',
-            atr: '3B 89 80 01 53 6D 61 72 74 53 43 4F 53 5D',
-            timestamp: new Date().toLocaleTimeString(),
-            blocks: [
-                { label: 'Root MF (3F00)', hex: '3F 00', ascii: 'ROOT OK (9000)', status: 'success' },
-                { label: 'DF SCOSTA', hex: 'A0 00 00 01 03 00 00', ascii: 'Blank (6A82)', status: 'locked' }
-            ]
-        };
-        socket.emit('card_detected', fake);
-        renderLogEntry({
-            timestamp: fake.timestamp,
-            level: 'success',
-            message: `CARD TAPPED -> UID: ${fake.uid_formatted} | ${fake.type}`
-        }, true);
-    }
+        // Socket Event: Waiting for card (Initial state)
+        socket.on('waiting_for_card', () => {
+            if (document.getElementById('studentDashboard').style.display !== 'none') {
+                setCardActiveState(false);
+            }
+        });
 
-    socket.on('connect', () => { 
-        renderLogEntry({
-            timestamp: new Date().toLocaleTimeString(),
-            level: 'info',
-            message: 'Web socket connected to ACR1281 Service'
-        }, true);
-    });
-</script>
+        // Socket Event: Reader Status
+        socket.on('reader_status', status => {
+            const dot = document.getElementById('readerDot');
+            const badge = document.getElementById('readerBadge');
+
+            if (status.connected) {
+                dot.className = 'status-dot connected';
+                badge.innerText = 'ACR1281 DETECTED';
+                badge.style.display = 'inline-block';
+            } else {
+                dot.className = 'status-dot disconnected';
+                badge.innerText = 'DISCONNECTED';
+                badge.style.display = 'inline-block';
+            }
+        });
+
+        // Initial fetch if page reloads with card already present
+        fetch('/api/userdata')
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success' && data.userdata) {
+                    updateDashboard(data.userdata, !!data.card_active);
+                } else {
+                    // Check if initial placeholder should show
+                    document.getElementById('waitingPlaceholder').style.display = 'block';
+                    document.getElementById('studentDashboard').style.display = 'none';
+                }
+            })
+            .catch(() => {
+                document.getElementById('waitingPlaceholder').style.display = 'block';
+                document.getElementById('studentDashboard').style.display = 'none';
+            });
+    </script>
 </body>
+
 </html>

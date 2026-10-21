@@ -24,25 +24,46 @@ def index():
 def api_readers():
     return jsonify(reader_service.list_readers())
 
-@app.route('/api/read-once')
-def api_read_once():
-    """REST API - read card once (for normal web app without socket)"""
-    # If card is currently resting on reader and already detected
-    if reader_service.last_card_data and reader_service.last_uid:
-        return jsonify(reader_service.last_card_data)
+@app.route('/api/userdata')
+def api_userdata():
+    """REST API - return clean user data decoded from SCOSTA card"""
+    is_active = (reader_service.last_card_data is not None)
+    # 1. Card tap ho chuka hai ya currently reader par hai
+    if getattr(reader_service, 'last_userdata', None):
+        resp = dict(reader_service.last_userdata)
+        resp["card_active"] = is_active
+        return jsonify(resp)
 
-    card = reader_service.read_contactless_uid()
-    if not card:
-        card = reader_service.read_contact_card()
-    if not card and reader_service.last_card_data and reader_service.last_uid:
-        card = reader_service.last_card_data
-    return jsonify(card or {"status": "no_card", "message": "Tap card on ACR1281"})
+    # 2. Direct probe agar background loop ne abhi catch nahi kiya
+    card = reader_service.read_contactless_uid() or reader_service.read_contact_card()
+    if getattr(reader_service, 'last_userdata', None):
+        resp = dict(reader_service.last_userdata)
+        resp["card_active"] = True
+        return jsonify(resp)
+
+    if card:
+        return jsonify({
+            "status": "success",
+            "card_active": True,
+            "uid": card.get("uid_formatted") or card.get("uid"),
+            "atr": card.get("atr"),
+            "userdata": None,
+            "message": "Card detected but no student profile (non-SCOSTA or raw card)"
+        })
+
+    return jsonify({"status": "no_card", "card_active": False, "message": "Tap card on ACR1281"})
 
 @socketio.on('connect')
 def handle_connect():
     status = reader_service.get_status_payload()
     socketio.emit('reader_status', status)
-    socketio.emit('log_history', reader_service.log_history)
+    if reader_service.last_card_data:
+        socketio.emit('card_detected', reader_service.last_card_data)
+    elif getattr(reader_service, 'last_userdata', None):
+        socketio.emit('card_deactivated', {
+            "status": "deactivated",
+            "last_userdata": reader_service.last_userdata
+        })
 
 @socketio.on('read_now')
 def handle_read_now():
@@ -68,7 +89,7 @@ if __name__ == '__main__':
     print("="*50)
     print("ACR1281 Web App Running")
     print("Open: http://localhost:5000")
-    print("API: http://localhost:5000/api/read-once")
+    print("API: http://localhost:5000/api/userdata")
     print("API: http://localhost:5000/api/scosta/scan")
     print("="*50)
 
