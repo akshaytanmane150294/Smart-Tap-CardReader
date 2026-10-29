@@ -62,7 +62,7 @@
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
-import threading, time
+import threading, time, os
 from acr1281_reader import ACR1281Service
 
 app = Flask(__name__)
@@ -125,4 +125,4 @@ def background_loop():
 
 if __name__ == '__main__':
     threading.Thread(target=background_loop, daemon=True).start()
-    socketio.run(app, host='127.0.0.1', port=5000, allow_unsafe_werkzeug=True)
+    socketio.run(app, host=os.environ.get('HOST', '0.0.0.0'), port=5000, allow_unsafe_werkzeug=True)
