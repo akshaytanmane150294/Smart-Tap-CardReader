@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Card Reader - Auto Server</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 30px auto;
+            padding: 20px;
+            background: #111;
+            color: #fff
+        }
+
+        .card {
+            background: #222;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 15px 0;
+            border-left: 4px solid #0f0
+        }
+
+        button {
+            background: #0f0;
+            color: #000;
+            border: none;
+            padding: 12px 25px;
+            font-size: 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            margin: 5px
+        }
+
+        button:hover {
+            background: #0c0
+        }
+
+        #log {
+            background: #000;
+            padding: 15px;
+            border-radius: 6px;
+            height: 250px;
+            overflow-y: scroll;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+            margin-left: 10px
+        }
+
+        .online {
+            background: #0f0;
+            color: #000
+        }
+
+        .offline {
+            background: #f55;
+            color: #fff
+        }
+
+        .idle {
+            background: #fa0;
+            color: #000
+        }
+
+        .big {
+            font-size: 22px;
+            color: #0f0;
+            margin: 12px 0;
+            word-break: break-all
+        }
+
+        .row {
+            margin: 8px 0
+        }
+
+        pre {
+            background: #000;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            color: #9f9;
+            overflow: auto;
+            margin: 8px 0 0
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Card Reader - Auto Mode</h1>
+    <p>Reader plug ya unplug karte hi status badalta hai. Card tap karo, ID turant dikhegi.</p>
+
+    <div class="card">
+        <h2>Server</h2>
+        <div class="row">Server connection: <span id="serverBadge" class="badge offline">Offline</span></div>
+        <div class="row" id="serverHelp" style="color:#fa0;font-size:14px">
+            Pehle terminal mein server chalao: <code>python app.py</code>, phir page <code>http://127.0.0.1:5000/</code>
+            se kholo.
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>USB Card Reader</h2>
+        <div class="row">Reader: <span id="readerBadge" class="badge offline">Unknown</span>
+            Card: <span id="cardBadge" class="badge idle">No card</span></div>
+        <div class="big" id="cardData">Card ID: -</div>
+        <div class="row">Cards Detected: <span id="count">0</span> | Last Card: <span id="lastCard">None</span></div>
+        <details>
+            <summary style="cursor:pointer;color:#9f9">Raw reader status</summary>
+            <pre id="raw">-</pre>
+        </details>
+    </div>
+
+    <div class="card">
+        <h3>Log</h3>
+        <div id="log">Ready...
+        </div>
+        <button onclick="document.getElementById('log').textContent=''"
+            style="background:#333;color:#fff">Clear</button>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script>
+        const $ = id => document.getElementById(id);
+        let count = 0;
+
+        function log(msg, kind) {
+            const colors = { error: "#f55", success: "#0f0", warn: "#ff0" };
+            const el = $('log');
+            const span = document.createElement('span');
+            span.style.color = colors[kind] || "#9f9";
+            span.textContent = new Date().toLocaleTimeString() + " - " + msg + "\n";
+            el.appendChild(span);
+            el.scrollTop = el.scrollHeight;
+        }
+        function badge(el, text, cls) { el.textContent = text; el.className = "badge " + cls; }
+
+        // file:// se kholne par bhi server se connect ho jaye
+        const socket = location.protocol === "file:" ? io("http://127.0.0.1:5000") : io();
+
+        socket.on('connect', () => {
+            badge($('serverBadge'), "Online", "online");
+            $('serverHelp').style.display = "none";
+            log("Server connected", "success");
+        });
+        socket.on('disconnect', () => {
+            badge($('serverBadge'), "Offline", "offline");
+            $('serverHelp').style.display = "block";
+            badge($('readerBadge'), "Unknown", "offline");
+            log("Server disconnected", "error");
+        });
+        socket.on('connect_error', () => {
+            badge($('serverBadge'), "Offline", "offline");
+            $('serverHelp').style.display = "block";
+        });
+
+        // get_status() ka format pata nahi, isliye common keys check karte hain
+        socket.on('reader_status', s => {
+            $('raw').textContent = JSON.stringify(s, null, 2);
+            const ok = s && (s.connected === true || s.reader_connected === true ||
+                s.status === "connected" || s.status === "ready" ||
+                (typeof s.reader === "string" && s.reader.length > 0));
+            const name = s && (s.reader || s.reader_name || s.name || "");
+            if (ok) badge($('readerBadge'), "Connected" + (name ? ": " + name : ""), "online");
+            else badge($('readerBadge'), "Not detected", "offline");
+            log("Reader status: " + JSON.stringify(s), ok ? "success" : "warn");
+        });
+
+        socket.on('card_detected', c => {
+            const uid = (c && (c.uid || c.card_id)) || "?";
+            count++;
+            $('count').textContent = count;
+            $('cardData').textContent = "Card ID: " + uid;
+            $('lastCard').textContent = uid;
+            badge($('cardBadge'), "Card on reader", "online");
+            log("Card detected: " + uid, "success");
+        });
+
+        socket.on('waiting_for_card', () => {
+            badge($('cardBadge'), "No card", "idle");
+            log("Waiting for card...");
+        });
+    </script>
+
+</body>
+
+</html>

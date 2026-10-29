@@ -25,6 +25,10 @@ python-dotenv==1.0.1
 pytz==2024.2
 colorama==0.4.6
 
+# Image lib
+Pillow==11.1.0
+
+
 # Optional - for future enhancements
 # For Aadhaar/ID card parsing
 # pycryptodome==3.21.0

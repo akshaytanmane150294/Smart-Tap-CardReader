@@ -1,6 +1,6 @@
 # acr_reader.py - Part 1
 import io
-#from PIL import Image
+from PIL import Image
 from smartcard.System import readers
 from smartcard.util import toHexString
 
@@ -118,49 +118,26 @@ class ACR1281Service:
                     photo_bytes = raw[start:end+2]
                 else:
                     photo_bytes = raw[start:] # incomplete par bhi save
+            
             return parsed, photo_bytes
 
     def read_scosta_file(self, conn):
             """MF 3F00 -> SFI 4"""
-            # try:
-            #     # SELECT MF
-            #     conn.transmit([0x00, 0xA4, 0x00, 0x00, 0x02, 0x3F, 0x00])
-            #     # READ SFI 4 - P1 = 0x84 (0x80 | 4)
-            #     full_file = bytearray()
-            #     # Chunk 1: Offset 0
-            #     data, sw1, sw2 = conn.transmit([0x00, 0xB0, 0x84, 0x00, 0x00]) # 
-            #     # breakpoint()
-
-            #     if sw1 == 0x6C: # Wrong length, sw2 me sahi length hai
-            #         data, sw1, sw2 = conn.transmit([0x00, 0xB0, 0x84, 0x00, sw2])
-            #     if sw1 != 0x90:
-            #         return None
-            #     full_file.extend(data)
-            #     # Chunk 2: Offset 0x80 (agar file badi hai to photo ke liye)
-            #     try:
-            #         data2, sw1, sw2 = conn.transmit([0x00, 0xB0, 0x84, 0x80, 0x00])
-            #         if sw1 == 0x6C:
-            #             data2, sw1, sw2 = conn.transmit([0x00, 0xB0, 0x84, 0x80, sw2])
-            #         breakpoint()    
-            #         if sw1 == 0x90:
-            #             full_file.extend(data2)
-            #     except:
-            #         pass
-            #     return full_file
-            # except Exception as e:
-            #     print(f"Read error: {e}")
-            #     return None
+            
             try:
                 # 1. MF Select
                 conn.transmit([0x00, 0xA4, 0x00, 0x00, 0x02, 0x3F, 0x00])
                 full_file = bytearray()
                 offset = 0
 
-                CHUNK = 0x80  # 128 byte ek baar me - safe hai
+                # CHUNK = 0x80  # 128 byte ek baar me - safe hai
+                CHUNK = 0xF0  # 240 byte ek baar me - safe hai
                 TOTAL_SIZE = 5133 # tumhara size
+
                 while offset < TOTAL_SIZE:
                     # P2 me offset ka low byte
                     p2 = offset & 0xFF
+
                     # Offset 256 se kam hai to SFI 4 se padho
                     if offset < 256:
                         p1 = 0x84  # 0x80 | 4
@@ -180,7 +157,7 @@ class ACR1281Service:
                     if sw1 == 0x90 or sw1 == 0x62:
                         full_file.extend(data)
                         offset += len(data)
-                        print(f"Read {len(data)} bytes, total {offset}/{TOTAL_SIZE}")
+                        # print(f"Read {len(data)} bytes, total {offset}/{TOTAL_SIZE}")
                         # Agar data CHUNK se kam aaya matlab file khatam
                         if len(data) < CHUNK:
                             break
@@ -194,6 +171,42 @@ class ACR1281Service:
             except Exception as e:
                 print(f"Read error: {e}")
                 return None
+                
+    
+    # def scan_all_EFs(self, conn):
+    #     all_files = {}
+    #     # 1. MF Select
+    #     conn.transmit([0x00, 0xA4, 0x00, 0x00, 0x02, 0x3F, 0x00])
+    #     print("\n--- Scanning All SFIs (1 to 30) ---")
+        
+    #     for sfi in range(1, 31): # 1 se 30 tak har SFI check karo
+    #         full_file = bytearray()
+    #         offset = 0
+    #         p1_sfi = 0x80 | sfi  # SFI 1 = 0x81, SFI 4 = 0x84
+    #         try:
+    #             while offset < 1024:
+    #                 cmd = [0x00, 0xB0, p1_sfi, offset, 0x00] # Le 0
+    #                 data, sw1, sw2 = conn.transmit(cmd)
+    #                 if sw1 == 0x6C: # Le galat hai to sahi Le se dobara
+    #                     cmd[-1] = sw2
+    #                     data, sw1, sw2 = conn.transmit(cmd)
+    #                 if sw1 == 0x90 and len(data) > 0:
+    #                     full_file.extend(data)
+    #                     offset += len(data)
+    #                     if len(data) < 0x80:
+    #                         break
+    #                 elif sw1 == 0x6A and (sw2 == 0x82 or sw2 == 0x83):
+    #                     break
+    #                 else:
+    #                     break
+    #             if len(full_file) > 10:
+    #                 all_files[f"SFI_{sfi}"] = full_file
+    #                 print(f"[+] SFI {sfi} mila: {len(full_file)} bytes")
+    #                 printable = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in full_file[:100])
+    #                 print(f"    Data: {printable}...")
+    #         except Exception:
+    #             pass
+    #     return all_files
 
 
     def scan_card(self):
@@ -237,13 +250,19 @@ class ACR1281Service:
             print("\n" + "="*50)
             print(f"[ACR1281] >>> CARD TAPPED!")
             print(f"  UID: {uid}")
-            print(f"  ATR: {atr}")    
+            print(f"  ATR: {atr}") 
+
             # SCOSTA File read karo
             raw_file = self.read_scosta_file(conn)
+            
             parsed, photo = None, None
             if raw_file:
                 parsed, photo = self.parse_and_extract(raw_file)
-                
+                if photo:
+                    import base64
+                    # photo_base64 ko parsed ke andar daal diya, ab socket me khud chala jayega
+                    parsed["photo_base64"] = base64.b64encode(photo).decode()
+                    parsed["photo_size"] = len(photo)
                 if parsed and parsed.get('name'):
                     print(f"  Student Name: {parsed.get('name')}")
                     print(f"  Roll No:      {parsed.get('roll_no')}")

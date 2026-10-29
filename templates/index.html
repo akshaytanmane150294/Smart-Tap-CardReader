@@ -690,9 +690,12 @@
 
                     <div style="display: flex; flex-direction: column; gap: 10px;">
                         <!-- Date of Joining Box -->
-                        <div id="dojBox" class="validity-highlight-box" style="background-color: #f8fafc; border-color: #e2e8f0;">
-                            <div class="validity-icon-circle" style="color: #475569; background: #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,0.06);">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <div id="dojBox" class="validity-highlight-box"
+                            style="background-color: #f8fafc; border-color: #e2e8f0;">
+                            <div class="validity-icon-circle"
+                                style="color: #475569; background: #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,0.06);">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                     <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
                                     <line x1="16" y1="2" x2="16" y2="6"></line>
                                     <line x1="8" y1="2" x2="8" y2="6"></line>
@@ -834,7 +837,12 @@
             const formattedName = rawName.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
             document.getElementById('studentName').innerText = formattedName;
             document.getElementById('avatarInitials').innerText = getInitials(rawName);
-
+            const avatarDiv = document.getElementById('avatarInitials');
+            if (user.photo_base64) {
+                avatarDiv.innerHTML = `<img src="data:image/jpeg;base64,${user.photo_base64}" style="width:100%; height:100%; object-fit:cover; border-radius:16px;">`;
+            } else {
+                avatarDiv.innerText = getInitials(rawName);
+            }
             // Degree / Department
             const dept = user.department || 'Academic Department';
             document.getElementById('studentDegree').innerText = dept;
@@ -904,7 +912,8 @@
                 blood_group: data.scosta_info.blood_group,
                 gender: data.scosta_info.gender,
                 user_id: data.scosta_info.user_id,
-                authority: data.scosta_info.authority
+                authority: data.scosta_info.authority,
+                photo_base64: data.scosta_info.photo_base64 || data.photo_base64
             } : null);
 
             if (user) {

@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Card Reader - Auto Server</title>
+  <style>
+    body {
+      font-family: Arial;
+      max-width: 800px;
+      margin: 30px auto;
+      padding: 20px;
+      background: #111;
+      color: #fff
+    }
+
+    .card {
+      background: #222;
+      padding: 20px;
+      border-radius: 10px;
+      margin: 15px 0;
+      border-left: 4px solid #0f0
+    }
+
+    button {
+      background: #0f0;
+      color: #000;
+      border: none;
+      padding: 12px 25px;
+      font-size: 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+      margin: 5px
+    }
+
+    button:hover {
+      background: #0c0
+    }
+
+    #log {
+      background: #000;
+      padding: 15px;
+      border-radius: 6px;
+      height: 250px;
+      overflow-y: scroll;
+      font-family: monospace;
+      color: #0f0;
+      font-size: 12px
+    }
+
+    .status {
+      font-size: 18px;
+      margin: 15px 0
+    }
+
+    input {
+      width: 100%;
+      padding: 10px;
+      border-radius: 6px;
+      border: 2px solid #0f0;
+      background: #000;
+      color: #0f0
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 15px;
+      font-size: 12px;
+      margin-left: 10px
+    }
+
+    .online {
+      background: #0f0;
+      color: #000
+    }
+
+    .offline {
+      background: #f55;
+      color: #fff
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>🔓 Card Reader - Auto Mode</h1>
+  <p>USB connect hote hi automatic server ko request jayega</p>
+
+  <div class="card">
+    <h2>⚙️ Server Settings</h2>
+    <input type="text" id="serverUrl" value="http://localhost:5000/api/card" placeholder="Server URL">
+    <label><input type="checkbox" id="autoSend" checked> Auto send to server ON</label>
+    <label><input type="checkbox" id="continuousMode"> Continuous mode (har 2 sec me bhejo)</label>
+    <div>Status: <span id="serverStatus" class="badge offline">Server Offline</span> <span id="autoStatus"
+        class="badge online">Auto ON</span></div>
+  </div>
+
+  <div class="card">
+    <h2>🔌 USB Card Reader</h2>
+    <button onclick="connectUSB()">Connect USB (ACR1281U)</button>
+    <button onclick="startAutoConnect()" style="background:#0ff;color:#000">🔄 Auto-Connect ON (Plug & Play)</button>
+    <div class="status" id="status2">Status: Not connected</div>
+    <div id="cardData2" style="font-size:22px;color:#0f0"></div>
+    <div>Cards Sent: <span id="sentCount">0</span> | Last Card: <span id="lastCard">None</span></div>
+  </div>
+
+  <div class="card">
+    <h3>📋 Log - Auto Requests</h3>
+    <div id="log">Ready... Waiting for USB...\n</div>
+    <button onclick="clearLog()" style="background:#333;color:#fff">Clear</button>
+    <button onclick="testServer()" style="background:#00f;color:#fff">Test Server</button>
+  </div>
+
+  <script>
+    let lastCardId = "";
+    let sentCount = 0;
+    let autoConnectInterval = null;
+    let continuousInterval = null;
+    let connectedDevice = null;
+
+    function log(msg, type = "") {
+      const el = document.getElementById('log');
+      const color = type === "error" ? "#f55" : type === "success" ? "#0f0" : type === "warn" ? "#ff0" : "#0f0";
+      el.innerHTML += `<span style="color:${color}">${new Date().toLocaleTimeString()} - ${msg}</span>\n`;
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function handleCard(cardId, method) {
+      cardId = cardId.trim().toUpperCase();
+      if (!cardId || cardId.length < 4) return;
+
+      // Avoid duplicate rapid sends
+      if (cardId === lastCardId) {
+        // In continuous mode, allow resend after 3 sec
+        const cont = document.getElementById('continuousMode').checked;
+        if (!cont) return;
+      }
+
+      lastCardId = cardId;
+      log(`✅ Card [${method}]: ${cardId}`, "success");
+      document.getElementById('cardData2').innerHTML = `Card ID: ${cardId}`;
+      document.getElementById('lastCard').textContent = cardId;
+      document.getElementById('status2').innerHTML = `✅ Connected - Last Card: ${cardId}`;
+
+      // AUTO SEND TO SERVER - As soon as card found
+      if (document.getElementById('autoSend').checked) {
+        autoSendToServer(cardId, method);
+      }
+    }
+
+    // AUTO SEND FUNCTION - Yeh tumhe chahiye tha
+    async function autoSendToServer(cardId, method = "WebUSB") {
+      const serverUrl = document.getElementById('serverUrl').value;
+      if (!serverUrl) return;
+
+      try {
+        log(`📤 Auto sending ${cardId} to ${serverUrl}...`);
+
+        const payload = {
+          card_id: cardId,
+          method: method,
+          timestamp: new Date().toISOString(),
+          location: "Gate 1",
+          device: connectedDevice ? connectedDevice.productName : "ACR1281U"
+        };
+
+        const res = await fetch(serverUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+          sentCount++;
+          document.getElementById('sentCount').textContent = sentCount;
+          document.getElementById('serverStatus').textContent = "Server Online";
+          document.getElementById('serverStatus').className = "badge online";
+          log(`✅ Server OK [${res.status}] - Sent count: ${sentCount}`, "success");
+        } else {
+          throw new Error(`Status ${res.status}`);
+        }
+      } catch (e) {
+        document.getElementById('serverStatus').textContent = "Server Offline";
+        document.getElementById('serverStatus').className = "badge offline";
+        log(`❌ Server failed: ${e.message} - Saved locally`, "error");
+        // Save locally as backup
+        let history = JSON.parse(localStorage.getItem('cards') || '[]');
+        history.push({ id: cardId, time: new Date().toISOString(), method });
+        localStorage.setItem('cards', JSON.stringify(history));
+      }
+    }
+
+    // AUTO-CONNECT - USB plug hote hi auto connect
+    async function startAutoConnect() {
+      log("🔄 Auto-Connect ON - USB plug karte hi auto connect hoga", "success");
+
+      // Listen for USB connect event
+      navigator.usb.addEventListener('connect', async (event) => {
+        log(`🔌 USB Device plugged: ${event.device.productName} - Auto connecting...`, "success");
+        try {
+          connectedDevice = event.device;
+          await connectUSBDevice(event.device);
+        } catch (e) { log(`Auto connect failed: ${e.message}`, "error"); }
+      });
+
+      navigator.usb.addEventListener('disconnect', (event) => {
+        log(`🔌 USB Device removed: ${event.device.productName}`, "warn");
+        document.getElementById('status2').innerHTML = "Status: Device disconnected";
+        connectedDevice = null;
+      });
+
+      // Also try to connect to already paired devices
+      try {
+        const devices = await navigator.usb.getDevices();
+        log(`Found ${devices.length} paired devices`);
+        for (const dev of devices) {
+          if (dev.vendorId === 0x072F) { // ACS
+            log(`Auto connecting to paired: ${dev.productName}`);
+            await connectUSBDevice(dev);
+            break;
+          }
+        }
+      } catch (e) { log(`getDevices error: ${e.message}`); }
+
+      document.getElementById('status2').innerHTML = "Status: 🔄 Auto-Connect ON - Plug USB now";
+    }
+
+    async function connectUSBDevice(device) {
+      try {
+        await device.open();
+        if (device.configuration === null) await device.selectConfiguration(1);
+        try { await device.claimInterface(0); } catch { await device.claimInterface(1); }
+
+        connectedDevice = device;
+        log(`✅ Connected: ${device.productName}`, "success");
+        document.getElementById('status2').innerHTML = `✅ Connected: ${device.productName} - Waiting for card...`;
+
+        // Reader connect hone ke baad server ko request send karein
+        if (document.getElementById('autoSend').checked) {
+          testServer();
+        }
+
+        // Start continuous reading automatically
+        autoListenUSB(device);
+
+        // Continuous mode - har 2 sec me last card bhejo agar checked hai
+        if (document.getElementById('continuousMode').checked) {
+          startContinuousSend();
+        }
+
+      } catch (e) {
+        if (e.message.includes("Access denied")) {
+          log("❌ Access Denied - Run in Admin CMD: net stop SCardSvr", "error");
+        } else {
+          log(`❌ Auto connect error: ${e.message}`, "error");
+        }
+      }
+    }
+
+    async function connectUSB() {
+      if (!navigator.usb) { log("WebUSB not supported", "error"); return; }
+      try {
+        log("Requesting USB device...");
+        const device = await navigator.usb.requestDevice({ filters: [{ vendorId: 0x072F }] });
+        await connectUSBDevice(device);
+      } catch (err) {
+        log(`❌ ${err.message}`, "error");
+      }
+    }
+
+
+
+    async function autoListenUSB(device) {
+      log("👂 Auto listening for cards - Tap card now...");
+      try {
+        while (true) {
+          let result = await device.transferIn(1, 64);
+          if (result.data) {
+            let txt = new TextDecoder().decode(result.data).trim();
+            if (txt.length >= 4 && /^[0-9A-Fa-f]+$/.test(txt)) {
+              handleCard(txt, "WebUSB-Auto");
+            }
+          }
+        }
+      } catch (e) {
+        log(`Listening stopped: ${e.message}`, "warn");
+        // Auto reconnect after 1 sec
+        setTimeout(() => {
+          if (connectedDevice) autoListenUSB(connectedDevice);
+        }, 1000);
+      }
+    }
+
+    function startContinuousSend() {
+      if (continuousInterval) clearInterval(continuousInterval);
+      continuousInterval = setInterval(() => {
+        if (lastCardId && document.getElementById('autoSend').checked) {
+          log(`🔁 Continuous mode: Resending ${lastCardId}`);
+          autoSendToServer(lastCardId, "Continuous");
+        }
+      }, 2000); // Har 2 sec me bhejo
+      log("🔁 Continuous mode ON - Har 2 sec me server ko bhejega");
+    }
+
+    function clearLog() { document.getElementById('log').innerHTML = "Cleared...\n"; }
+
+    async function testServer() {
+      const url = document.getElementById('serverUrl').value;
+      if (!url) return;
+      log(`📡 Connecting to server: ${url}...`);
+      try {
+        const payload = {
+          event: "reader_connected",
+          device: connectedDevice ? connectedDevice.productName : "ACR1281U",
+          timestamp: new Date().toISOString()
+        };
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          document.getElementById('serverStatus').textContent = "Server Online";
+          document.getElementById('serverStatus').className = "badge online";
+          log(`✅ Server Connected OK (${res.status})`, "success");
+        } else {
+          throw new Error(`HTTP ${res.status}`);
+        }
+      } catch (e) {
+        document.getElementById('serverStatus').textContent = "Server Offline";
+        document.getElementById('serverStatus').className = "badge offline";
+        log(`❌ Server Connection Failed: ${e.message}`, "error");
+      }
+    }
+
+    // Handle checkbox changes
+    document.getElementById('continuousMode').addEventListener('change', (e) => {
+      if (e.target.checked) { startContinuousSend(); } else { if (continuousInterval) clearInterval(continuousInterval); log("Continuous mode OFF"); }
+    });
+
+    window.onload = () => {
+      log("✅ Ready - USB Reader connect karo");
+      log("👉 'Connect USB (ACR1281U)' dabakar reader select karein");
+    };
+  </script>
+
+</body>
+
+</html>
