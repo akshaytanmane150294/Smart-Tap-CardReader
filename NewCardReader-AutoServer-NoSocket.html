@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Card Reader - No Socket - Auto Server Request</title>
+<style>
+body{font-family:Arial;max-width:800px;margin:20px auto;padding:20px;background:#111;color:#fff}
+.card{background:#222;padding:20px;border-radius:10px;margin:15px 0;border-left:4px solid #0f0}
+button{background:#0f0;color:#000;border:none;padding:12px 25px;border-radius:6px;cursor:pointer;font-weight:bold;margin:5px}
+.badge{padding:5px 12px;border-radius:15px;font-size:12px}
+.online{background:#0f0;color:#000} .offline{background:#f55;color:#fff}
+#log{background:#000;padding:15px;border-radius:6px;height:350px;overflow-y:scroll;font-family:monospace;color:#0f0;font-size:12px}
+.status{font-size:18px;margin:15px 0;font-weight:bold}
+</style>
+</head>
+<body>
+
+<h1>🔓 Card Reader - Auto Server (No Socket)</h1>
+<p>Reader Select karte hi auto Server ko request jayega - No WebUSB, No Socket.IO</p>
+
+<div class="card">
+<h2>⚙ Server Settings</h2>
+<input type="text" id="serverUrl" value="http://127.0.0.1:5000/api/card" placeholder="Server URL">
+<label><input type="checkbox" id="autoSend" checked> Auto send to server ON</label>
+<div>Status: <span id="serverStatus" class="badge offline">Server Offline</span></div>
+</div>
+
+<div class="card">
+<h2>🔌 USB Card Reader</h2>
+<button onclick="connectReader()" style="background:#0f0">Connect USB (ACR1281U)</button>
+<button onclick="startAutoConnect()" style="background:#0ff;color:#000">🔄 Auto-Connect ON (Plug & Play)</button>
+<button onclick="disconnectReader()" style="background:#f55;color:#fff">Disconnect</button>
+<div class="status" id="status2">Status: Not connected</div>
+<div id="readerName" style="color:#0ff"></div>
+<div id="cardData2" style="font-size:22px;color:#0f0"></div>
+<div>Cards Sent: <span id="sentCount">0</span> | Last Card: <span id="lastCard">None</span></div>
+</div>
+
+<div class="card">
+<h3>📋 Log - Auto Requests (Reader Select ke baad)</h3>
+<div id="log">Ready...<br></div>
+<button onclick="clearLog()" style="background:#333;color:#fff">Clear</button>
+</div>
+
+<script>
+let lastCardId = "";
+let lastUid = null;
+let sentCount = 0;
+let pollInterval = null;
+let statusInterval = null;
+let isConnected = false;
+
+function log(msg, type="") {
+  const el = document.getElementById('log');
+  const color = type === "error" ? "#f55" : type === "success" ? "#0f0" : type === "warn" ? "#ff0" : "#0f0";
+  el.innerHTML += `<span style="color:${color}">${new Date().toLocaleTimeString()} - ${msg}</span><br>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function updateStatus(html, connected) {
+  document.getElementById('status2').innerHTML = html;
+  isConnected = connected;
+}
+
+// 1. CONNECT READER - Reader Select karte hi
+async function connectReader() {
+  log("🔍 Reader dhoondh rahe hai... Backend se puchh rahe hai", "warn");
+  updateStatus("Status: 🔄 Checking reader...", false);
+  
+  try {
+    // Backend se status mango - No WebUSB, sirf HTTP
+    const res = await fetch("http://127.0.0.1:5000/api/status");
+    if (!res.ok) throw new Error("Backend not reachable");
+    
+    const data = await res.json();
+    console.log("Status:", data);
+    
+    if (data.connected || data.reader_connected || data.status === "connected" || data.reader) {
+      const readerName = data.reader_name || data.reader || data.name || "ACR1281U";
+      
+      // LOG 1: Reader connected
+      log(`✅ Reader Selected: ${readerName}`, "success");
+      log(`✅ Reader connected`, "success");
+      updateStatus(`Status: ✅ Connected - ${readerName}`, true);
+      document.getElementById('readerName').textContent = `Connected: ${readerName}`;
+      document.getElementById('serverStatus').textContent = "Server Online";
+      document.getElementById('serverStatus').className = "badge online";
+      
+      // LOG 2: Start sending request to Server
+      log(`📡 Start sending request to Server: ${document.getElementById('serverUrl').value}`, "success");
+      log(`🔄 Auto polling ON - Card ka wait kar rahe hai...`, "success");
+      
+      // Start polling for cards - Har 500ms me check
+      startPolling();
+      
+    } else {
+      log(`❌ Reader not found - ACR1281U plug karo`, "error");
+      updateStatus("Status: ❌ Not connected - Reader not found", false);
+      log(`💡 Fix: ACR1281U USB plug karo, fir Connect dabao`, "warn");
+    }
+    
+  } catch (e) {
+    log(`❌ Backend se connect nahi ho raha: ${e.message}`, "error");
+    log(`💡 Backend chal raha hai kya? docker ps check karo`, "warn");
+    log(`💡 URL check karo: http://127.0.0.1:5000/api/status`, "warn");
+    updateStatus("Status: ❌ Server Offline - Backend not running", false);
+  }
+}
+
+function startPolling() {
+  // Purana interval band karo
+  if (pollInterval) clearInterval(pollInterval);
+  if (statusInterval) clearInterval(statusInterval);
+  
+  // Har 500ms me card check karo - Backend ka background_loop already scan kar raha hai
+  pollInterval = setInterval(async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:5000/api/status");
+      const data = await res.json();
+      
+      // Status update
+      if (data.connected || data.reader_connected) {
+        if (!isConnected) {
+          updateStatus(`Status: ✅ Connected - ${data.reader_name || "ACR1281U"}`, true);
+        }
+      } else {
+        // Reader nikal gaya
+        if (isConnected) {
+          log(`🔌 USB Device removed: ACR1281U`, "warn");
+          log(`⏹️ Auto requests stopped - Status: Not connected`, "warn");
+          updateStatus("Status: ❌ Not connected - Device removed", false);
+          document.getElementById('readerName').textContent = "";
+          stopPolling();
+        }
+      }
+      
+      // Card check - Agar naya card aaya to
+      const card = data.last_card || data.card || data.lastCard;
+      if (card) {
+        const uid = card.uid || card.card_id || card.id;
+        if (uid && uid !== lastUid) {
+          lastUid = uid;
+          handleCard(uid);
+        }
+      }
+      
+      // Agar direct card object me uid hai
+      if (data.uid && data.uid !== lastUid) {
+        lastUid = data.uid;
+        handleCard(data.uid);
+      }
+      
+    } catch (e) {
+      // Ignore polling errors
+    }
+  }, 500);
+  
+  // Card ke liye alag se /api/card bhi poll karo (optional)
+  // Tumhare backend me /api/card POST hai, GET nahi, isliye status se hi kaam chalega
+}
+
+function stopPolling() {
+  if (pollInterval) clearInterval(pollInterval);
+  if (statusInterval) clearInterval(statusInterval);
+  pollInterval = null;
+}
+
+function handleCard(cardId) {
+  cardId = String(cardId).trim().toUpperCase();
+  if (!cardId || cardId.length < 4) return;
+  
+  log(`✅ Card Detected: ${cardId}`, "success");
+  document.getElementById('cardData2').innerHTML = `Card ID: ${cardId}`;
+  document.getElementById('lastCard').textContent = cardId;
+  
+  // Auto send to server
+  if (document.getElementById('autoSend').checked) {
+    autoSendToServer(cardId);
+  }
+}
+
+async function autoSendToServer(cardId) {
+  const serverUrl = document.getElementById('serverUrl').value;
+  if (!serverUrl) return;
+  
+  try {
+    log(`📤 Sending request to Server: ${serverUrl} - card_id=${cardId}`, "success");
+    
+    const payload = {
+      card_id: cardId,
+      timestamp: new Date().toISOString(),
+      location: "Gate 1",
+      event: "card_detected"
+    };
+    
+    const res = await fetch(serverUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    
+    if (res.ok) {
+      const resp = await res.json().catch(() => ({}));
+      sentCount++;
+      document.getElementById('sentCount').textContent = sentCount;
+      log(`✅ Server OK [${res.status}] - Card sent, count: ${sentCount}`, "success");
+    } else {
+      throw new Error(`HTTP ${res.status}`);
+    }
+  } catch (e) {
+    log(`❌ Server failed: ${e.message}`, "error");
+  }
+}
+
+async function startAutoConnect() {
+  log("🔄 Auto-Connect ON - Reader plug karte hi auto connect hoga", "success");
+  updateStatus("Status: 🔄 Auto-Connect ON - Plug USB now", false);
+  
+  // Har 2 sec me backend check karo - Plug & Play
+  if (statusInterval) clearInterval(statusInterval);
+  statusInterval = setInterval(async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:5000/api/status");
+      const data = await res.json();
+      if ((data.connected || data.reader_connected) && !isConnected) {
+        log(`🔌 USB Device plugged: ${data.reader_name || "ACR1281U"} - Auto connecting...`, "success");
+        await connectReader(); // Auto connect
+      }
+    } catch (e) {}
+  }, 2000);
+}
+
+function disconnectReader() {
+  stopPolling();
+  log(`🔌 USB Device removed: ACR1281U - Manual disconnect`, "warn");
+  log(`⏹️ Auto requests stopped`, "warn");
+  updateStatus("Status: ❌ Not connected - Disconnected", false);
+  document.getElementById('readerName').textContent = "";
+  lastUid = null;
+}
+
+function clearLog() {
+  document.getElementById('log').innerHTML = "Cleared...<br>";
+}
+
+window.onload = () => {
+  log("✅ Ready - No Socket, No WebUSB, Only HTTP Fetch");
+  log("👉 'Connect USB' dabao - Backend se reader check hoga");
+  log("👉 Reader milte hi: Reader connected + Start sending request to Server");
+};
+</script>
+
+</body>
+</html>
