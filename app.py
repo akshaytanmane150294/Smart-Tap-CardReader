@@ -92,9 +92,16 @@ def receive_card():
 
 @socketio.on('connect')
 def handle_connect():
-    emit('reader_status', service.get_status())
-    if service.last_card:
-        emit('card_detected', service.last_card)
+    # emit('reader_status', service.get_status())
+    # if service.last_card:
+    #     emit('card_detected', service.last_card)
+    try:
+        emit('reader_status', service.get_status())
+        if service.last_card:
+            emit('card_detected', service.last_card)
+    except Exception as e:
+        emit('reader_status', {'connected': False, 'error': str(e)})
+
 
 
 def background_loop():
