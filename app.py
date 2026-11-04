@@ -88,6 +88,19 @@ def receive_card():
     data = request.get_json(silent=True) or {}
     print("Received Card Data:", data)
     return jsonify({"status": "ok", "card": service.last_card})
+    
+
+@app.route('/api/userdata')  # <-- YE MISSING THA, ISKO ADD KARO
+def get_userdata():
+    if service.last_card:
+        userdata = service.last_card.get('userdata') or service.last_card.get('scosta_info') or service.last_card
+        return jsonify({
+            "status": "success",
+            "userdata": userdata,
+            "card_active": True,
+            "card": service.last_card
+        })
+    return jsonify({"status": "waiting", "userdata": None, "card_active": False})
 
 
 @socketio.on('connect')

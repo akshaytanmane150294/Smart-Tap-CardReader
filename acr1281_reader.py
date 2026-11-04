@@ -30,12 +30,14 @@ class ACR1281Service:
         # Pehle PICC (Contactless tap antenna) dhoondo
         for r in all_r:
             name = str(r).upper()
-            if ("ACR128" in name or "ACS" in name) and "PICC" in name:
+            # if ("ACR128" in name or "ACS" in name) and "PICC" in name:
+            if ("ACR128" in name or "ACS" in name) and ("PICC" in name or "00 01" in name or " 1" in name):
                 return r
         # Agar PICC na mile to koi bhi non-SAM ACR1281
         for r in all_r:
             name = str(r).upper()
-            if ("ACR128" in name or "ACS" in name) and "SAM" not in name:
+            # if ("ACR128" in name or "ACS" in name) and "SAM" not in name:
+            if ("ACR128" in name or "ACS" in name) and "SAM" not in name and "00 02" not in name:
                 return r
         return None
 
