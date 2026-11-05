@@ -130,13 +130,14 @@ def background_loop():
             with scan_lock:
                 card = service.scan_card()
 
-            if card:
+            if card and card.get('userdata'):
                 if card['uid'] != last_uid:
                     socketio.emit('card_detected', card)
                     last_uid = card['uid']
-            elif last_uid is not None:
-                socketio.emit('waiting_for_card', {})
-                last_uid = None
+            else:
+                if last_uid is not None:
+                    socketio.emit('waiting_for_card', {})
+                    last_uid = None
         except Exception as e:
             print("Loop error:", e)
             time.sleep(2)

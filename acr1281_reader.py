@@ -30,8 +30,7 @@ class ACR1281Service:
         # Pehle PICC (Contactless tap antenna) dhoondo
         for r in all_r:
             name = str(r).upper()
-            # if ("ACR128" in name or "ACS" in name) and "PICC" in name:
-            if ("ACR128" in name or "ACS" in name) and ("PICC" in name or "00 01" in name or " 1" in name):
+            if ("ACR128" in name or "ACS" in name) and ("PICC" in name or "00 01" in name):
                 return r
         # Agar PICC na mile to koi bhi non-SAM ACR1281
         for r in all_r:
@@ -224,6 +223,7 @@ class ACR1281Service:
         if self.conn and self.last_card:
             try:
                 # Lightweight ping (Get UID) - RF field reset nahi hogi
+                # Card ka UID (Card number) nikalne ka command
                 data, sw1, sw2 = self.conn.transmit([0xFF, 0xCA, 0x00, 0x00, 0x00])
                 if sw1 == 0x90 and sw2 == 0x00:
                     return self.last_card  # Wahi card abhi bhi rakha hai, instant return (0ms delay)
